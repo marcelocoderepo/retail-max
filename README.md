@@ -315,8 +315,8 @@ ai-data-engineer-azure-databricks/
 1. **Clone the repository**
 
 ```bash
-git clone https://github.com/marcelocoderepo/ai-data-engineer-cc.git
-cd ai-data-engineer-cc
+git clone https://github.com/marcelocoderepo/retail-max.git
+cd retail-max
 ```
 
 2. **Open with Claude Code**
