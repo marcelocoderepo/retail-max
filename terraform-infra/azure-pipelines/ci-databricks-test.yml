@@ -1,0 +1,67 @@
+# ---------------------------------------------------------------------------
+# CI Pipeline: Databricks Test (PR Validation)
+# Runs unit tests, linting, and coverage on pull requests.
+# Publishes test results and code coverage to Azure DevOps.
+# ---------------------------------------------------------------------------
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - src/**
+      - tests/**
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+
+steps:
+  - checkout: self
+
+  - task: UsePythonVersion@0
+    displayName: "Use Python 3.10"
+    inputs:
+      versionSpec: "3.10"
+      addToPath: true
+
+  - script: |
+      python -m pip install --upgrade pip
+      pip install -r requirements-dev.txt
+    displayName: "Install Dependencies"
+    workingDirectory: $(Build.SourcesDirectory)
+
+  - script: |
+      python -m pytest tests/ \
+        --junitxml=$(Build.SourcesDirectory)/test-results/results.xml \
+        --cov=src \
+        --cov-report=xml:$(Build.SourcesDirectory)/test-results/coverage.xml \
+        --cov-report=term-missing \
+        -v
+    displayName: "Run Tests with Coverage"
+    workingDirectory: $(Build.SourcesDirectory)
+
+  - script: |
+      ruff check src/ tests/ --output-format=text
+    displayName: "Lint with Ruff"
+    workingDirectory: $(Build.SourcesDirectory)
+
+  - task: PublishTestResults@2
+    displayName: "Publish Test Results"
+    condition: succeededOrFailed()
+    inputs:
+      testResultsFormat: JUnit
+      testResultsFiles: "$(Build.SourcesDirectory)/test-results/results.xml"
+      testRunTitle: "Databricks Unit Tests"
+      mergeTestResults: true
+
+  - task: PublishCodeCoverageResults@2
+    displayName: "Publish Code Coverage"
+    condition: succeededOrFailed()
+    inputs:
+      summaryFileLocation: "$(Build.SourcesDirectory)/test-results/coverage.xml"

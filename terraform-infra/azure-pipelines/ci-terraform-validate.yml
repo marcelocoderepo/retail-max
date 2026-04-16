@@ -1,0 +1,109 @@
+# ---------------------------------------------------------------------------
+# CI Pipeline: Terraform Validate (PR Validation)
+# Runs on pull requests targeting main when Terraform code changes.
+# Validates format, syntax, and produces a dev plan for review.
+# ---------------------------------------------------------------------------
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - terraform-infra/environments/**
+      - terraform-infra/modules/**
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+  - name: TF_VERSION
+    value: "1.7.5"
+  - name: SERVICE_CONNECTION
+    value: "retailmax-azure-connection"
+
+stages:
+  # ------------------------------------------------------------------
+  # Stage 1: Validate — fmt, init, validate across all environments
+  # ------------------------------------------------------------------
+  - stage: Validate
+    displayName: "Terraform Validate & Format Check"
+    jobs:
+      - job: TerraformValidate
+        displayName: "Validate All Environments"
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform $(TF_VERSION)"
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          # ---------- DEV ----------
+          - script: |
+              cd $(Build.SourcesDirectory)/terraform-infra/environments/dev
+              terraform init -backend=false
+              terraform validate
+              terraform fmt -check -recursive
+            displayName: "Validate - dev"
+
+          # ---------- HML ----------
+          - script: |
+              cd $(Build.SourcesDirectory)/terraform-infra/environments/hml
+              terraform init -backend=false
+              terraform validate
+              terraform fmt -check -recursive
+            displayName: "Validate - hml"
+
+          # ---------- PRD ----------
+          - script: |
+              cd $(Build.SourcesDirectory)/terraform-infra/environments/prd
+              terraform init -backend=false
+              terraform validate
+              terraform fmt -check -recursive
+            displayName: "Validate - prd"
+
+  # ------------------------------------------------------------------
+  # Stage 2: Plan Dev — Authenticated plan for the dev environment
+  # ------------------------------------------------------------------
+  - stage: PlanDev
+    displayName: "Terraform Plan (dev)"
+    dependsOn: Validate
+    condition: succeeded()
+    jobs:
+      - job: TerraformPlanDev
+        displayName: "Plan dev Environment"
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform $(TF_VERSION)"
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          - task: AzureCLI@2
+            displayName: "Terraform Init & Plan (dev)"
+            inputs:
+              azureSubscription: $(SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              inlineScript: |
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_CLIENT_SECRET=$servicePrincipalKey
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                cd $(Build.SourcesDirectory)/terraform-infra/environments/dev
+                terraform init
+                terraform plan -out=tfplan -input=false
+
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish dev tfplan Artifact"
+            inputs:
+              targetPath: $(Build.SourcesDirectory)/terraform-infra/environments/dev/tfplan
+              artifact: tfplan-dev
+              publishLocation: pipeline

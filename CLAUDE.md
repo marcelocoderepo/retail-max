@@ -13,15 +13,45 @@ Retail Max is a data engineering and AI project focused on building production-g
 - **Language:** Python 3.10+
 - **Project Management:** Linear
 
+## Repository
+
+- **GitHub:** `https://github.com/marcelocoderepo/retail-max.git`
+- **Branch principal:** `main`
+
 ## Project Structure
 
 ```
 retail-max/
 ├── CLAUDE.md                  ← This file
+├── README.md                  ← Project documentation (public)
+├── .gitignore
+├── .secrets/                  ← Local credentials (git-ignored, never committed)
+│   ├── README.md              ← Setup guide for credentials
+│   ├── azure-tenant.env       ← Azure Tenant (shared across environments)
+│   ├── azure-devops.env       ← Azure DevOps PAT
+│   ├── sql-server.env         ← AdventureWorks SQL Server connection
+│   ├── terraform-backend.env  ← Terraform state backend
+│   ├── dev/                   ← DEV environment credentials
+│   ├── hml/                   ← HML (staging) environment credentials
+│   └── prd/                   ← PRD (production) environment credentials
+├── terraform-infra/           ← Terraform IaC (Azure infrastructure)
+│   ├── README.md              ← Setup guide and module reference
+│   ├── environments/          ← Per-environment configs (dev/hml/prd)
+│   ├── modules/               ← 10 reusable Terraform modules
+│   ├── azure-pipelines/       ← Azure DevOps CI/CD pipeline YAML
+│   └── scripts/               ← Bootstrap scripts (init-backend, validate)
 ├── docs/                      ← Architecture & framework documentation
 │   ├── readme.md              ← Documentation hub
 │   ├── executor-model.md      ← Perfect Executor Model spec (consolidated)
 │   └── agent-template.md      ← Agent templates (3 patterns)
+├── document/                  ← Business requirements & implementation plans
+│   ├── brd-retail-max.md      ← Business Requirements Document
+│   ├── frd-adventure-works.md ← Functional Requirements (AdventureWorks)
+│   ├── architecture-plan.md   ← Architecture plan (3-environment stack)
+│   ├── implementation-plan.md ← Master implementation plan
+│   ├── implementation-plan-dev.md   ← Dev environment plan
+│   ├── implementation-plan-infra.md ← Infrastructure plan
+│   └── linear-project-plan.md      ← Linear project milestones
 ├── kb/                        ← Knowledge base (curated, offline-first)
 │   ├── lakeflow/              ← Databricks Lakeflow pipelines
 │   ├── spark/                 ← Apache Spark optimization
@@ -57,6 +87,24 @@ retail-max/
             ├── spark-performance-analyzer.md
             └── spark-streaming-architect.md
 ```
+
+## Business Context
+
+RetailMax is an omnichannel retail company. The project builds a **Lakehouse Analytics Platform** using the AdventureWorks database as the data source.
+
+### Data Architecture
+- **Medallion Architecture:** Bronze (raw ingestion) → Silver (cleaned/normalized) → Gold (Star Schema)
+- **Data Source:** AdventureWorks SQL Server (SalesOrderHeader, SalesOrderDetail, Customer, Product, ProductInventory)
+- **Dimensional Model:** `fact_sales` + `dim_customer`, `dim_product`, `dim_date`
+- **Key KPIs:** Revenue, Average Ticket, Churn Rate (>90 days no purchase), Inventory Level
+
+### Planning Documents
+All business and implementation plans are in `document/`:
+- **BRD** (`brd-retail-max.md`) — Business objectives, stakeholders, KPIs, scope
+- **FRD** (`frd-adventure-works.md`) — Data dictionary, business rules, ETL transformations, dimensional model
+- **Architecture** (`architecture-plan.md`) — 3-environment stack (dev/staging/prod)
+- **Implementation Plans** — Master, dev, and infrastructure breakdown
+- **Linear Plan** (`linear-project-plan.md`) — Project milestones and issue tracking
 
 ## Agent Architecture: Perfect Executor Model
 
@@ -148,6 +196,7 @@ KB files are the **primary source of truth** for project-specific patterns. Alwa
 | Command | Description |
 |---------|-------------|
 | `/publish` | Smart publish to GitHub: analyzes changes, reviews code (security + quality), generates commit message, shows summary, and pushes with confirmation |
+| `/archflow` | Gera visualizacao HTML interativa da arquitetura Azure (diagramas, inventario, seguranca, custos) |
 
 ## Conventions
 
@@ -166,4 +215,5 @@ KB files are the **primary source of truth** for project-specific patterns. Alwa
 
 ### Documentation
 - Architecture docs live in `docs/`
+- Business & implementation plans live in `document/`
 - KB content lives in `kb/{domain}/`

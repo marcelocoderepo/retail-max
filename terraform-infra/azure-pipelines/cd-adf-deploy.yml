@@ -1,0 +1,86 @@
+# ---------------------------------------------------------------------------
+# CD Pipeline: ADF Deploy (Triggered after ADF Publish)
+# Deploys ADF ARM templates through hml -> prd with approval gates.
+# This pipeline has no automatic trigger — it is invoked after ADF publish.
+# ---------------------------------------------------------------------------
+
+trigger: none
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+  - group: retailmax-secrets
+  - name: SERVICE_CONNECTION
+    value: "retailmax-azure-connection"
+
+stages:
+  # ------------------------------------------------------------------
+  # Stage 1: Deploy ADF to hml
+  # ------------------------------------------------------------------
+  - stage: DeployAdfHml
+    displayName: "Deploy ADF to hml"
+    jobs:
+      - deployment: AdfDeployHml
+        displayName: "ADF ARM Deployment (hml)"
+        environment: hml
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: "Deploy ADF ARM Template (hml)"
+                  inputs:
+                    deploymentScope: Resource Group
+                    azureResourceManagerConnection: $(SERVICE_CONNECTION)
+                    subscriptionId: $(AZURE_SUBSCRIPTION_ID)
+                    action: Create Or Update Resource Group
+                    resourceGroupName: $(ADF_RESOURCE_GROUP_HML)
+                    location: eastus2
+                    templateLocation: Linked artifact
+                    csmFile: $(Build.SourcesDirectory)/adf/ARMTemplateForFactory.json
+                    csmParametersFile: $(Build.SourcesDirectory)/adf/ARMTemplateParametersForFactory.json
+                    overrideParameters: >-
+                      -factoryName "$(ADF_FACTORY_NAME_HML)"
+                      -ls_adls_properties_typeProperties_url "$(ADLS_URL_HML)"
+                      -ls_keyvault_properties_typeProperties_baseUrl "$(KEYVAULT_URL_HML)"
+                    deploymentMode: Incremental
+
+  # ------------------------------------------------------------------
+  # Stage 2: Deploy ADF to prd (manual approval required)
+  # ------------------------------------------------------------------
+  - stage: DeployAdfPrd
+    displayName: "Deploy ADF to prd (approval required)"
+    dependsOn: DeployAdfHml
+    condition: succeeded()
+    jobs:
+      - deployment: AdfDeployPrd
+        displayName: "ADF ARM Deployment (prd)"
+        environment: prd
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: AzureResourceManagerTemplateDeployment@3
+                  displayName: "Deploy ADF ARM Template (prd)"
+                  inputs:
+                    deploymentScope: Resource Group
+                    azureResourceManagerConnection: $(SERVICE_CONNECTION)
+                    subscriptionId: $(AZURE_SUBSCRIPTION_ID)
+                    action: Create Or Update Resource Group
+                    resourceGroupName: $(ADF_RESOURCE_GROUP_PRD)
+                    location: eastus2
+                    templateLocation: Linked artifact
+                    csmFile: $(Build.SourcesDirectory)/adf/ARMTemplateForFactory.json
+                    csmParametersFile: $(Build.SourcesDirectory)/adf/ARMTemplateParametersForFactory.json
+                    overrideParameters: >-
+                      -factoryName "$(ADF_FACTORY_NAME_PRD)"
+                      -ls_adls_properties_typeProperties_url "$(ADLS_URL_PRD)"
+                      -ls_keyvault_properties_typeProperties_baseUrl "$(KEYVAULT_URL_PRD)"
+                    deploymentMode: Incremental

@@ -1,0 +1,41 @@
+# ---------------------------------------------------------------------------
+# CI Pipeline: ADF Validate (PR Validation)
+# Validates Azure Data Factory ARM templates on pull requests.
+# Uses @microsoft/azure-data-factory-utilities for offline validation.
+# ---------------------------------------------------------------------------
+
+trigger: none
+
+pr:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - adf/**
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+
+steps:
+  - checkout: self
+
+  - task: NodeTool@0
+    displayName: "Install Node.js 18.x"
+    inputs:
+      versionSpec: "18.x"
+
+  - script: |
+      npm install @microsoft/azure-data-factory-utilities
+    displayName: "Install ADF Utilities"
+    workingDirectory: $(Build.SourcesDirectory)
+
+  - script: |
+      node node_modules/@microsoft/azure-data-factory-utilities/lib/index.js validate \
+        "$(Build.SourcesDirectory)/adf" \
+        /subscriptions/$(AZURE_SUBSCRIPTION_ID)/resourceGroups/$(ADF_RESOURCE_GROUP)/providers/Microsoft.DataFactory/factories/$(ADF_FACTORY_NAME)
+    displayName: "Validate ADF ARM Templates"
+    workingDirectory: $(Build.SourcesDirectory)

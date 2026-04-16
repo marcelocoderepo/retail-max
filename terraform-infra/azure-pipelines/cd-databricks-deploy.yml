@@ -1,0 +1,112 @@
+# ---------------------------------------------------------------------------
+# CD Pipeline: Databricks Deploy (Merge to main)
+# Deploys Databricks bundles through dev -> hml -> prd with approval gates.
+# Uses Databricks Asset Bundles (DABs) CLI for deployment.
+# Auth: SPN OAuth (not personal access tokens)
+# ---------------------------------------------------------------------------
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - src/**
+      - databricks.yml
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+  - group: retailmax-secrets
+
+stages:
+  # ------------------------------------------------------------------
+  # Stage 1: Deploy to dev — Auto-deploy on merge
+  # ------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: "Deploy Databricks to dev"
+    jobs:
+      - job: DatabricksDeployDev
+        displayName: "Databricks Bundle Deploy (dev)"
+        steps:
+          - checkout: self
+
+          - script: |
+              curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+            displayName: "Install Databricks CLI"
+
+          - script: |
+              databricks bundle deploy --target dev
+            displayName: "Deploy Bundle to dev"
+            workingDirectory: $(Build.SourcesDirectory)
+            env:
+              DATABRICKS_HOST: $(DATABRICKS_HOST_DEV)
+              DATABRICKS_CLIENT_ID: $(ARM_CLIENT_ID_DEV)
+              DATABRICKS_CLIENT_SECRET: $(ARM_CLIENT_SECRET_DEV)
+              ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  # ------------------------------------------------------------------
+  # Stage 2: Deploy to hml — Auto-deploy after dev succeeds
+  # ------------------------------------------------------------------
+  - stage: DeployHml
+    displayName: "Deploy Databricks to hml"
+    dependsOn: DeployDev
+    condition: succeeded()
+    jobs:
+      - deployment: DatabricksDeployHml
+        displayName: "Databricks Bundle Deploy (hml)"
+        environment: hml
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - script: |
+                    curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+                  displayName: "Install Databricks CLI"
+
+                - script: |
+                    databricks bundle deploy --target hml
+                  displayName: "Deploy Bundle to hml"
+                  workingDirectory: $(Build.SourcesDirectory)
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_HML)
+                    DATABRICKS_CLIENT_ID: $(ARM_CLIENT_ID_HML)
+                    DATABRICKS_CLIENT_SECRET: $(ARM_CLIENT_SECRET_HML)
+                    ARM_TENANT_ID: $(ARM_TENANT_ID)
+
+  # ------------------------------------------------------------------
+  # Stage 3: Deploy to prd — Manual approval required via 'prd' environment
+  # ------------------------------------------------------------------
+  - stage: DeployPrd
+    displayName: "Deploy Databricks to prd (approval required)"
+    dependsOn: DeployHml
+    condition: succeeded()
+    jobs:
+      - deployment: DatabricksDeployPrd
+        displayName: "Databricks Bundle Deploy (prd)"
+        environment: prd
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - script: |
+                    curl -fsSL https://raw.githubusercontent.com/databricks/setup-cli/main/install.sh | sh
+                  displayName: "Install Databricks CLI"
+
+                - script: |
+                    databricks bundle deploy --target prd
+                  displayName: "Deploy Bundle to prd"
+                  workingDirectory: $(Build.SourcesDirectory)
+                  env:
+                    DATABRICKS_HOST: $(DATABRICKS_HOST_PRD)
+                    DATABRICKS_CLIENT_ID: $(ARM_CLIENT_ID_PRD)
+                    DATABRICKS_CLIENT_SECRET: $(ARM_CLIENT_SECRET_PRD)
+                    ARM_TENANT_ID: $(ARM_TENANT_ID)
