@@ -30,6 +30,20 @@ Thumbs.db
 *.key
 credentials.json
 
+# Secrets (local only)
+.secrets/
+
+# Terraform
+.terraform/
+*.tfplan
+tfplan
+*.tfstate
+*.tfstate.backup
+crash.log
+
+# Generated artifacts
+document/archflow.html
+
 # Jupyter
 .ipynb_checkpoints/
 

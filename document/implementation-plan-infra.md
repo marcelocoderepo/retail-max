@@ -123,8 +123,16 @@ terraform-infra/
 │   │   ├── main.tf              # Service Principals, Managed Identities, AD Groups
 │   │   ├── variables.tf
 │   │   └── outputs.tf
-│   └── monitoring/
-│       ├── main.tf              # Log Analytics, Diagnostic Settings, Alerts
+│   ├── monitoring/
+│   │   ├── main.tf              # Log Analytics, Diagnostic Settings, Alerts, Budgets
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   ├── dns-zones/
+│   │   ├── main.tf              # Private DNS Zones + VNet Links
+│   │   ├── variables.tf
+│   │   └── outputs.tf
+│   └── policy/
+│       ├── main.tf              # Azure Policy Definitions + Assignments
 │       ├── variables.tf
 │       └── outputs.tf
 └── scripts/
@@ -144,16 +152,40 @@ CONTAINER="tfstate"
 LOCATION="eastus2"
 
 az group create --name $RESOURCE_GROUP --location $LOCATION
+
+# Storage com GRS, versionamento, soft-delete e encryption
 az storage account create \
   --name $STORAGE_ACCOUNT \
   --resource-group $RESOURCE_GROUP \
   --location $LOCATION \
-  --sku Standard_LRS \
+  --sku Standard_GRS \
   --kind StorageV2 \
-  --allow-blob-public-access false
+  --allow-blob-public-access false \
+  --require-infrastructure-encryption true \
+  --min-tls-version TLS1_2
+
+# Habilitar versionamento e soft-delete (90 dias)
+az storage account blob-service-properties update \
+  --account-name $STORAGE_ACCOUNT \
+  --resource-group $RESOURCE_GROUP \
+  --enable-versioning true \
+  --enable-delete-retention true \
+  --delete-retention-days 90 \
+  --enable-container-delete-retention true \
+  --container-delete-retention-days 90
+
 az storage container create \
   --name $CONTAINER \
   --account-name $STORAGE_ACCOUNT
+
+# Lock para impedir exclusao acidental
+az lock create \
+  --name "tfstate-lock" \
+  --resource-group $RESOURCE_GROUP \
+  --resource-type Microsoft.Storage/storageAccounts \
+  --resource $STORAGE_ACCOUNT \
+  --lock-type CanNotDelete \
+  --notes "Protege Terraform state - NAO remover"
 ```
 
 ```hcl
@@ -289,7 +321,32 @@ module "monitoring" {
   env                 = local.env
   data_factory_id     = module.data_factory.id
   databricks_id       = module.databricks.workspace_id
+  monthly_budget      = var.monthly_budget  # ex: 700 (dev), 500 (hml), 1000 (prd)
   tags                = local.tags
+}
+
+module "dns_zones" {
+  source              = "../../modules/dns-zones"
+  resource_group_name = module.resource_group.name
+  vnet_id             = module.networking.vnet_id
+  env                 = local.env
+  tags                = local.tags
+  # Cria Private DNS Zones e VNet links para:
+  # - privatelink.blob.core.windows.net
+  # - privatelink.dfs.core.windows.net
+  # - privatelink.vaultcore.azure.net
+  # - privatelink.database.windows.net
+  # - privatelink.azuredatabricks.net
+}
+
+module "policy" {
+  source              = "../../modules/policy"
+  subscription_id     = var.subscription_id
+  env                 = local.env
+  required_tags       = ["project", "environment", "managed_by", "cost_center"]
+  allowed_locations   = [var.location]
+  # Policies: deny public IP, require tags, require encryption,
+  #           enforce diagnostic settings, deny non-approved SKUs
 }
 ```
 

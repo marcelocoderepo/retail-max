@@ -1,0 +1,20 @@
+###############################################################################
+# Module: resource-group - Variables
+###############################################################################
+
+variable "name" {
+  description = "Name of the resource group (e.g., rg-retailmax-dev)"
+  type        = string
+}
+
+variable "location" {
+  description = "Azure region for the resource group"
+  type        = string
+  default     = "eastus2"
+}
+
+variable "tags" {
+  description = "Tags to apply to the resource group"
+  type        = map(string)
+  default     = {}
+}

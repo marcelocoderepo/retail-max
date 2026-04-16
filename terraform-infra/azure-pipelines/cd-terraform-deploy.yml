@@ -1,0 +1,191 @@
+# ---------------------------------------------------------------------------
+# CD Pipeline: Terraform Deploy (Merge to main)
+# Deploys infrastructure through dev -> hml -> prd with approval gates.
+# Production requires manual approval configured on the 'prd' environment.
+# ---------------------------------------------------------------------------
+
+trigger:
+  branches:
+    include:
+      - main
+  paths:
+    include:
+      - terraform-infra/environments/**
+      - terraform-infra/modules/**
+
+pr: none
+
+pool:
+  vmImage: ubuntu-latest
+
+variables:
+  - group: retailmax-common
+  - group: retailmax-secrets
+  - name: TF_VERSION
+    value: "1.7.5"
+  - name: SERVICE_CONNECTION
+    value: "retailmax-azure-connection"
+
+stages:
+  # ------------------------------------------------------------------
+  # Stage 1: Deploy Dev — Auto-deploy on merge
+  # ------------------------------------------------------------------
+  - stage: DeployDev
+    displayName: "Deploy to dev"
+    jobs:
+      - deployment: TerraformApplyDev
+        displayName: "Terraform Apply (dev)"
+        environment: dev
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: TerraformInstaller@1
+                  displayName: "Install Terraform $(TF_VERSION)"
+                  inputs:
+                    terraformVersion: $(TF_VERSION)
+
+                - task: AzureCLI@2
+                  displayName: "Terraform Init & Apply (dev)"
+                  inputs:
+                    azureSubscription: $(SERVICE_CONNECTION)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_CLIENT_SECRET=$servicePrincipalKey
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      cd $(Build.SourcesDirectory)/terraform-infra/environments/dev
+                      terraform init
+                      terraform apply -auto-approve -input=false
+
+  # ------------------------------------------------------------------
+  # Stage 2: Deploy Hml — Auto-deploy after dev succeeds
+  # ------------------------------------------------------------------
+  - stage: DeployHml
+    displayName: "Deploy to hml"
+    dependsOn: DeployDev
+    condition: succeeded()
+    jobs:
+      - deployment: TerraformApplyHml
+        displayName: "Terraform Apply (hml)"
+        environment: hml
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: TerraformInstaller@1
+                  displayName: "Install Terraform $(TF_VERSION)"
+                  inputs:
+                    terraformVersion: $(TF_VERSION)
+
+                - task: AzureCLI@2
+                  displayName: "Terraform Init & Apply (hml)"
+                  inputs:
+                    azureSubscription: $(SERVICE_CONNECTION)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_CLIENT_SECRET=$servicePrincipalKey
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      cd $(Build.SourcesDirectory)/terraform-infra/environments/hml
+                      terraform init
+                      terraform apply -auto-approve -input=false
+
+  # ------------------------------------------------------------------
+  # Stage 3: Plan Prd — Generate plan artifact for review
+  # ------------------------------------------------------------------
+  - stage: PlanPrd
+    displayName: "Plan prd"
+    dependsOn: DeployHml
+    condition: succeeded()
+    jobs:
+      - job: TerraformPlanPrd
+        displayName: "Terraform Plan (prd)"
+        steps:
+          - checkout: self
+
+          - task: TerraformInstaller@1
+            displayName: "Install Terraform $(TF_VERSION)"
+            inputs:
+              terraformVersion: $(TF_VERSION)
+
+          - task: AzureCLI@2
+            displayName: "Terraform Init & Plan (prd)"
+            inputs:
+              azureSubscription: $(SERVICE_CONNECTION)
+              scriptType: bash
+              scriptLocation: inlineScript
+              addSpnToEnvironment: true
+              inlineScript: |
+                export ARM_CLIENT_ID=$servicePrincipalId
+                export ARM_CLIENT_SECRET=$servicePrincipalKey
+                export ARM_TENANT_ID=$tenantId
+                export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                cd $(Build.SourcesDirectory)/terraform-infra/environments/prd
+                terraform init
+                terraform plan -out=tfplan -input=false
+
+          - task: PublishPipelineArtifact@1
+            displayName: "Publish prd tfplan Artifact"
+            inputs:
+              targetPath: $(Build.SourcesDirectory)/terraform-infra/environments/prd/tfplan
+              artifact: tfplan-prd
+              publishLocation: pipeline
+
+  # ------------------------------------------------------------------
+  # Stage 4: Apply Prd — Manual approval required via 'prd' environment
+  # ------------------------------------------------------------------
+  - stage: ApplyPrd
+    displayName: "Deploy to prd (approval required)"
+    dependsOn: PlanPrd
+    condition: succeeded()
+    jobs:
+      - deployment: TerraformApplyPrd
+        displayName: "Terraform Apply (prd)"
+        environment: prd
+        strategy:
+          runOnce:
+            deploy:
+              steps:
+                - checkout: self
+
+                - task: TerraformInstaller@1
+                  displayName: "Install Terraform $(TF_VERSION)"
+                  inputs:
+                    terraformVersion: $(TF_VERSION)
+
+                - task: DownloadPipelineArtifact@2
+                  displayName: "Download prd tfplan Artifact"
+                  inputs:
+                    artifact: tfplan-prd
+                    targetPath: $(Build.SourcesDirectory)/terraform-infra/environments/prd
+
+                - task: AzureCLI@2
+                  displayName: "Terraform Init & Apply Plan (prd)"
+                  inputs:
+                    azureSubscription: $(SERVICE_CONNECTION)
+                    scriptType: bash
+                    scriptLocation: inlineScript
+                    addSpnToEnvironment: true
+                    inlineScript: |
+                      export ARM_CLIENT_ID=$servicePrincipalId
+                      export ARM_CLIENT_SECRET=$servicePrincipalKey
+                      export ARM_TENANT_ID=$tenantId
+                      export ARM_SUBSCRIPTION_ID=$(az account show --query id -o tsv)
+
+                      cd $(Build.SourcesDirectory)/terraform-infra/environments/prd
+                      terraform init
+                      terraform apply -input=false tfplan
