@@ -1,8 +1,27 @@
 # Plano de Implementacao - Parte 2: Desenvolvimento
 
-**Versao:** 2.1 | **Data:** 2026-03-30 | **Status:** Revisado
+**Versao:** 3.0 | **Data:** 2026-04-17 | **Status:** PARCIALMENTE CONCLUIDO
 **Referencia:** `document/architecture-plan.md` v2.1
 **Complemento:** `document/implementation-plan-infra.md` (Parte 1: Infraestrutura e DevOps)
+
+**Changelog v3.0 (2026-04-17):**
+- Status atualizado para refletir estado real do projeto (abril 2026)
+- **Databricks: CONCLUIDO** - 3 workspaces Premium, Unity Catalog, DLT Bronze/Silver/Gold, KPIs, todas 19 tabelas criadas em dev
+- **ADF: CONCLUIDO** - Linked Services, Datasets, Pipelines (master, full, incremental), execucao bem-sucedida, dados no ADLS
+- ADF MSI com permissoes UC concedidas (USE_CATALOG, USE_SCHEMA, SELECT, MODIFY)
+- Unity Catalog: nomenclatura corrigida para `retailmax` (sem sufixo de ambiente)
+- DLT: split em 3 pipelines separados (bronze/silver/gold) - UC exige 1 target por pipeline
+- Nomes de tabelas: sem sufixo de layer (ex: `SalesOrderHeader`, NAO `SalesOrderHeader_bronze`)
+- Refs cross-pipeline: `spark.readStream.table("retailmax.bronze.X")` em vez de `dlt.read_stream()`
+- Refs intra-pipeline: `spark.read.table("LIVE.X")` (sem schema prefix)
+- `delta.feature.timestampNtz: supported` adicionado a todas table_properties
+- `databricks.yml`: 3 pipelines + job orquestrador `retailmax_medallion_refresh`
+- `ingestion_control`: movida para schema `parametros`, landing_path sem `/landing/` prefix
+- ADF pipeline: catalog default corrigido de `retailmax_dev` para `retailmax`
+- Testes: 18 testes unitarios (11 silver + 7 gold) passando
+- PRs: retailmax-databricks (#1, #2) e retailmax-data-factory (#3) mergeados
+- Cronograma atualizado: Fases 2-4 CONCLUIDO com checkboxes, Fases 5-6 PENDENTE
+- **Pendente:** testes integracao E2E, testes KPI Gold, Databricks App, deploy hml/prd, dashboards
 
 **Changelog v2.1:**
 - Schemas corrigidos: todas as tabelas usam `SalesLT` (validado contra AdventureWorksLT real)
@@ -37,13 +56,13 @@ Para convencoes de nomenclatura, topologia de rede, CI/CD pipelines e custos, co
 
 | Item | Fonte | Status |
 |------|-------|--------|
-| Todos os recursos Azure provisionados (dev) | Fase 1 - Infra | DEPENDENCIA |
-| CI/CD operacional nos 3 projetos DevOps | Fase 1 - Infra | DEPENDENCIA |
-| Unity Catalog com schemas bronze/silver/gold | Fase 1 - Infra | DEPENDENCIA |
-| ADF Linked Services configurados | Fase 1 - Infra | DEPENDENCIA |
-| SQL Server AdventureWorksLT acessivel | DBA | PENDENTE |
-| Python 3.10+ no ambiente local | Data Eng | PENDENTE |
-| Acesso ao workspace Databricks (dev) | Admin | PENDENTE |
+| Todos os recursos Azure provisionados (dev) | Fase 1 - Infra | CONCLUIDO - 48 recursos, zero diff |
+| CI/CD operacional nos 3 projetos DevOps | Fase 1 - Infra | CONCLUIDO - 6 pipelines ativas |
+| Unity Catalog com schemas bronze/silver/gold/parametros | Fase 1 - Infra | CONCLUIDO - catalog `retailmax` |
+| ADF Linked Services configurados | Fase 1 - Infra | CONCLUIDO - SQL, ADLS, Databricks, KV |
+| SQL Server AdventureWorksLT acessivel | DBA | CONCLUIDO - sql-retailmax-source.database.windows.net |
+| Python 3.10+ no ambiente local | Data Eng | CONCLUIDO |
+| Acesso ao workspace Databricks (dev) | Admin | CONCLUIDO - adb-7405613595594457.17 |
 
 ### 1.2 Tabelas Fonte - AdventureWorksLT (Validado)
 
@@ -64,6 +83,16 @@ Schema unico: `SalesLT`. Validado via conexao direta ao banco `sql-retailmax-sou
 ---
 
 ## 2. Azure Data Factory - Pipelines de Ingestao
+
+**Status: CONCLUIDO (Abril 2026)**
+
+- [x] Linked Services configurados (SQL Server, ADLS, Key Vault, Databricks)
+- [x] Datasets parametrizados (ds_sqlserver_table, ds_adls_parquet)
+- [x] Pipeline master ingestion (metadata-driven)
+- [x] Pipeline full load (SQL Server -> ADLS)
+- [x] Pipeline incremental load (com watermark)
+- [x] ADF executado com sucesso, dados landing no ADLS
+- [x] ADF MSI com permissoes UC concedidas (USE_CATALOG, USE_SCHEMA, SELECT, MODIFY)
 
 ### 2.1 Estrutura do Repositorio `adf-pipelines`
 
@@ -200,6 +229,21 @@ Output: maxWatermark = @{activity('Get Max Watermark').output.firstRow.maxWaterm
 
 ## 3. Databricks - Pipelines DLT
 
+**Status: CONCLUIDO (Abril 2026)**
+
+- [x] 3 Workspaces Premium com Unity Catalog (dev/hml/prd)
+- [x] Unity Catalog: catalogo `retailmax`, schemas bronze/silver/gold/parametros
+- [x] Cluster Policy: ADF Single Node UC (ID: `001C9EDA0B8C62D0`)
+- [x] Tabela de controle: `retailmax.parametros.ingestion_control` (7 tabelas seeded)
+- [x] Asset Bundle (`databricks.yml`): 3 pipelines (bronze/silver/gold) + orchestration job
+- [x] DLT Bronze: 7 streaming tables via Auto Loader (cloudFiles)
+- [x] DLT Silver: 7 tabelas com dedup, validacao (`expect_all_or_drop`), business rules
+- [x] DLT Gold Model: `dim_date`, `dim_customer`, `dim_product`, `fact_sales`
+- [x] DLT Gold KPIs: `kpi_receita_total`, `kpi_ticket_medio`, `kpi_churn`, `kpi_produtos_descontinuados`, `kpi_top_produtos`
+- [x] Todas as 19 tabelas criadas com sucesso no workspace dev
+- [x] 18 testes unitarios escritos (test_silver + test_gold)
+- [x] ADF MSI com permissoes UC (USE_CATALOG, USE_SCHEMA, SELECT, MODIFY)
+
 ### 3.1 Estrutura do Repositorio `databricks-pipelines`
 
 ```
@@ -245,44 +289,86 @@ databricks-pipelines/
 ### 3.2 Databricks Asset Bundle
 
 ```yaml
-# databricks.yml
+# databricks.yml (v3.0 - configuracao real em producao)
+# NOTA: DLT com Unity Catalog exige 1 target (schema) por pipeline.
+#       Por isso sao 3 pipelines separados + 1 job orquestrador.
 bundle:
-  name: retailmax-pipelines
+  name: retailmax-databricks
 
 workspace:
-  root_path: /Shared/retailmax
+  root_path: /Workspace/Users/${workspace.current_user.userName}/.bundle/${bundle.name}/${bundle.target}
 
 targets:
   dev:
+    default: true
+    presets:
+      pipelines_development: true
+      trigger_pause_status: PAUSED
     workspace:
       host: https://adb-7405613595594457.17.azuredatabricks.net
-    default: true
 
   hml:
     workspace:
       host: https://adb-7405619649239054.14.azuredatabricks.net
 
   prd:
+    mode: production
     workspace:
       host: https://adb-7405605251477436.16.azuredatabricks.net
+    permissions:
+      - group_name: grp-retailmax-prd-data-engineers
+        level: CAN_MANAGE
 
 resources:
   pipelines:
-    retailmax_dlt_pipeline:
-      name: "retailmax_medallion_pipeline"
-      target: "retailmax_${bundle.target}"
-      catalog: "retailmax_${bundle.target}"
+    # Pipeline por schema - DLT com UC exige target unico por pipeline
+    bronze_pipeline:
+      name: "retailmax_bronze"
+      catalog: "retailmax"
+      target: "bronze"
       libraries:
         - notebook:
             path: src/pipelines/bronze/ingest_bronze.py
+      configuration:
+        "spark.databricks.delta.preview.enabled": "true"
+        "spark.sql.parquet.inferTimestampNTZ.enabled": "false"
+        "pipelines.applyTimestampWithoutTimezoneInParquet": "false"
+      photon: true
+      serverless: true
+      channel: "PREVIEW"
+      edition: "ADVANCED"
+      continuous: false
+
+    silver_pipeline:
+      name: "retailmax_silver"
+      catalog: "retailmax"
+      target: "silver"
+      libraries:
         - notebook:
             path: src/pipelines/silver/transform_silver.py
+      configuration:
+        "spark.databricks.delta.preview.enabled": "true"
+        "spark.sql.parquet.inferTimestampNTZ.enabled": "false"
+        "pipelines.applyTimestampWithoutTimezoneInParquet": "false"
+      photon: true
+      serverless: true
+      channel: "PREVIEW"
+      edition: "ADVANCED"
+      continuous: false
+
+    gold_pipeline:
+      name: "retailmax_gold"
+      catalog: "retailmax"
+      target: "gold"
+      libraries:
         - notebook:
             path: src/pipelines/gold/model_gold.py
         - notebook:
             path: src/pipelines/gold/kpis_gold.py
       configuration:
         "spark.databricks.delta.preview.enabled": "true"
+        "spark.sql.parquet.inferTimestampNTZ.enabled": "false"
+        "pipelines.applyTimestampWithoutTimezoneInParquet": "false"
       photon: true
       serverless: true
       channel: "PREVIEW"
@@ -290,12 +376,24 @@ resources:
       continuous: false
 
   jobs:
-    retailmax_dlt_job:
-      name: "retailmax_dlt_refresh"
+    retailmax_medallion_job:
+      name: "retailmax_medallion_refresh"
       tasks:
-        - task_key: "run_dlt"
+        - task_key: "run_bronze"
           pipeline_task:
-            pipeline_id: ${resources.pipelines.retailmax_dlt_pipeline.id}
+            pipeline_id: ${resources.pipelines.bronze_pipeline.id}
+            full_refresh: false
+        - task_key: "run_silver"
+          depends_on:
+            - task_key: "run_bronze"
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.silver_pipeline.id}
+            full_refresh: false
+        - task_key: "run_gold"
+          depends_on:
+            - task_key: "run_silver"
+          pipeline_task:
+            pipeline_id: ${resources.pipelines.gold_pipeline.id}
             full_refresh: false
 ```
 
@@ -303,29 +401,16 @@ resources:
 
 ```sql
 -- setup/create_catalog.sql (executar manualmente ou via notebook)
+-- NOTA: Catalog unico "retailmax" em todos os workspaces.
+--       O workspace identifica o ambiente (dev/hml/prd).
 
--- Criar catalogos (3 ambientes)
-CREATE CATALOG IF NOT EXISTS retailmax_dev;
-CREATE CATALOG IF NOT EXISTS retailmax_hml;
-CREATE CATALOG IF NOT EXISTS retailmax_prd;
+CREATE CATALOG IF NOT EXISTS retailmax;
 
--- Schemas em dev
-USE CATALOG retailmax_dev;
-CREATE SCHEMA IF NOT EXISTS bronze COMMENT 'Raw ingested data';
-CREATE SCHEMA IF NOT EXISTS silver COMMENT 'Cleaned and validated data';
-CREATE SCHEMA IF NOT EXISTS gold   COMMENT 'Dimensional model and KPIs';
-
--- Schemas em hml (mesma estrutura)
-USE CATALOG retailmax_hml;
-CREATE SCHEMA IF NOT EXISTS bronze COMMENT 'Raw ingested data';
-CREATE SCHEMA IF NOT EXISTS silver COMMENT 'Cleaned and validated data';
-CREATE SCHEMA IF NOT EXISTS gold   COMMENT 'Dimensional model and KPIs';
-
--- Schemas em prd (mesma estrutura)
-USE CATALOG retailmax_prd;
-CREATE SCHEMA IF NOT EXISTS bronze;
-CREATE SCHEMA IF NOT EXISTS silver;
-CREATE SCHEMA IF NOT EXISTS gold;
+USE CATALOG retailmax;
+CREATE SCHEMA IF NOT EXISTS bronze     COMMENT 'Raw ingested data (Auto Loader)';
+CREATE SCHEMA IF NOT EXISTS silver     COMMENT 'Cleaned and validated data (DLT expectations)';
+CREATE SCHEMA IF NOT EXISTS gold       COMMENT 'Dimensional model and KPIs (Star Schema)';
+CREATE SCHEMA IF NOT EXISTS parametros COMMENT 'Control tables (ingestion_control)';
 ```
 
 ### 3.4 Tabela ingestion_control - DDL
@@ -334,27 +419,27 @@ CREATE SCHEMA IF NOT EXISTS gold;
 # src/setup/create_ingestion_control.py
 
 # Executar como notebook normal (nao DLT)
-# NOTA: substituir retailmax_dev por retailmax_hml ou retailmax_prd conforme ambiente
-catalog = spark.conf.get("spark.databricks.unityCatalog.catalog", "retailmax_dev")
+# NOTA: catalog "retailmax" e o mesmo em todos workspaces
+catalog = dbutils.widgets.get("catalog") if "dbutils" in dir() else "retailmax"
 
 spark.sql(f"""
-CREATE TABLE IF NOT EXISTS {catalog}.bronze.ingestion_control (
+CREATE TABLE IF NOT EXISTS {catalog}.parametros.ingestion_control (
     source_schema        STRING    NOT NULL COMMENT 'Schema de origem no SQL Server',
     source_table         STRING    NOT NULL COMMENT 'Tabela de origem',
     target_schema        STRING    NOT NULL COMMENT 'Schema destino no Lakehouse',
     target_table         STRING    NOT NULL COMMENT 'Tabela destino',
     load_type            STRING    NOT NULL COMMENT 'full ou incremental',
     watermark_column     STRING             COMMENT 'Coluna para carga incremental',
-    last_watermark_value TIMESTAMP          COMMENT 'Ultimo valor processado',
+    last_watermark_value STRING             COMMENT 'Ultimo valor processado',
     primary_key          STRING    NOT NULL COMMENT 'Chave primaria para dedup',
-    is_active            BOOLEAN   NOT NULL DEFAULT true COMMENT 'Ativar/desativar',
-    landing_path         STRING    NOT NULL COMMENT 'Caminho ADLS Gen2',
-    schedule_frequency   STRING    NOT NULL DEFAULT 'daily' COMMENT 'daily/hourly/weekly',
+    is_active            BOOLEAN   NOT NULL COMMENT 'Ativar/desativar',
+    landing_path         STRING    NOT NULL COMMENT 'Caminho ADLS Gen2 (relativo ao container landing)',
+    schedule_frequency   STRING    NOT NULL COMMENT 'daily/hourly/weekly',
     last_load_status     STRING             COMMENT 'SUCCESS/FAILED/RUNNING',
     last_load_timestamp  TIMESTAMP          COMMENT 'Quando foi a ultima carga',
     row_count_last_load  BIGINT             COMMENT 'Registros ultima carga',
-    created_at           TIMESTAMP NOT NULL DEFAULT current_timestamp(),
-    updated_at           TIMESTAMP NOT NULL DEFAULT current_timestamp()
+    created_at           TIMESTAMP NOT NULL,
+    updated_at           TIMESTAMP NOT NULL
 )
 USING DELTA
 COMMENT 'Tabela de controle metadata-driven para ingestao ADF'
@@ -365,44 +450,47 @@ TBLPROPERTIES (
 """)
 
 # Dados iniciais (7 tabelas - schema SalesLT validado)
+# NOTA: Nomes de tabela sem sufixo de layer (ex: SalesOrderHeader, NAO SalesOrderHeader_bronze)
+#       Landing path relativo ao container (ex: SalesOrderHeader/, sem /landing/ prefix)
 spark.sql(f"""
-INSERT INTO {catalog}.bronze.ingestion_control
+INSERT INTO {catalog}.parametros.ingestion_control
 (source_schema, source_table, target_schema, target_table, load_type,
- watermark_column, primary_key, is_active, landing_path, schedule_frequency)
+ watermark_column, primary_key, is_active, landing_path, schedule_frequency,
+ created_at, updated_at)
 VALUES
-('SalesLT', 'SalesOrderHeader',  'bronze', 'SalesOrderHeader_bronze',  'incremental', 'ModifiedDate', 'SalesOrderID',       true, '/landing/SalesOrderHeader/',  'daily'),
-('SalesLT', 'SalesOrderDetail',  'bronze', 'SalesOrderDetail_bronze',  'incremental', 'ModifiedDate', 'SalesOrderDetailID', true, '/landing/SalesOrderDetail/',  'daily'),
-('SalesLT', 'Customer',          'bronze', 'Customer_bronze',          'full',         NULL,          'CustomerID',         true, '/landing/Customer/',           'daily'),
-('SalesLT', 'Product',           'bronze', 'Product_bronze',           'full',         NULL,          'ProductID',          true, '/landing/Product/',            'daily'),
-('SalesLT', 'Address',           'bronze', 'Address_bronze',           'full',         NULL,          'AddressID',          true, '/landing/Address/',            'daily'),
-('SalesLT', 'CustomerAddress',   'bronze', 'CustomerAddress_bronze',   'full',         NULL,          'CustomerID',         true, '/landing/CustomerAddress/',    'daily'),
-('SalesLT', 'ProductCategory',   'bronze', 'ProductCategory_bronze',   'full',         NULL,          'ProductCategoryID',  true, '/landing/ProductCategory/',    'daily')
+('SalesLT', 'SalesOrderHeader',  'bronze', 'SalesOrderHeader',  'incremental', 'ModifiedDate', 'SalesOrderID',       true, 'SalesOrderHeader/',  'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'SalesOrderDetail',  'bronze', 'SalesOrderDetail',  'incremental', 'ModifiedDate', 'SalesOrderDetailID', true, 'SalesOrderDetail/',  'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'Customer',          'bronze', 'Customer',          'full',         NULL,          'CustomerID',         true, 'Customer/',           'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'Product',           'bronze', 'Product',           'full',         NULL,          'ProductID',          true, 'Product/',            'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'Address',           'bronze', 'Address',           'full',         NULL,          'AddressID',          true, 'Address/',            'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'CustomerAddress',   'bronze', 'CustomerAddress',   'full',         NULL,          'CustomerID',         true, 'CustomerAddress/',    'daily', current_timestamp(), current_timestamp()),
+('SalesLT', 'ProductCategory',   'bronze', 'ProductCategory',   'full',         NULL,          'ProductCategoryID',  true, 'ProductCategory/',    'daily', current_timestamp(), current_timestamp())
 """)
 ```
 
 ### 3.5 DLT Pipeline - Bronze
 
 ```python
-# src/pipelines/bronze/ingest_bronze.py
+# src/pipelines/bronze/ingest_bronze.py (v3.0 - codigo real em producao)
+# NOTA: Nomes de tabela SEM sufixo "_bronze" (UC schema = target = "bronze" no pipeline)
+#       table_properties incluem timestampNtz (necessario para Parquet do ADF)
 import dlt
 from pyspark.sql import functions as F
 
-# Storage account varia por ambiente: stretailmaxdev / stretailmaxhml / stretailmaxprd
-# Configurado via pipeline settings ou spark.conf
 LANDING_BASE = spark.conf.get(
     "retailmax.landing_base",
     "abfss://landing@stretailmaxdev.dfs.core.windows.net"
 )
 
-# -------------------------------------------------------------------
-# Helper: cria uma streaming table bronze generica
-# -------------------------------------------------------------------
 def create_bronze_table(table_name: str, landing_path: str, comment: str):
     @dlt.expect("rescued_data_null", "_rescued_data IS NULL")
     @dlt.table(
-        name=f"{table_name}_bronze",
+        name=table_name,  # SEM sufixo _bronze (schema bronze = target do pipeline)
         comment=comment,
-        table_properties={"quality": "bronze"},
+        table_properties={
+            "quality": "bronze",
+            "delta.feature.timestampNtz": "supported",  # necessario para Parquet NTZ
+        },
     )
     def _inner():
         return (
@@ -413,72 +501,36 @@ def create_bronze_table(table_name: str, landing_path: str, comment: str):
             .option("cloudFiles.schemaLocation", f"{LANDING_BASE}/_schemas/{table_name}")
             .load(f"{LANDING_BASE}/{landing_path}")
             .withColumn("_ingested_at", F.current_timestamp())
-            .withColumn("_source_file", F.input_file_name())
         )
     return _inner
 
-# -------------------------------------------------------------------
-# Bronze Tables (7 tabelas - schema SalesLT)
-# -------------------------------------------------------------------
-sales_order_header_bronze = create_bronze_table(
-    "SalesOrderHeader",
-    "SalesOrderHeader/",
-    "Cabecalho de pedidos - ingestao bruta (SalesLT.SalesOrderHeader)"
-)
-
-sales_order_detail_bronze = create_bronze_table(
-    "SalesOrderDetail",
-    "SalesOrderDetail/",
-    "Detalhes de pedidos - ingestao bruta (SalesLT.SalesOrderDetail)"
-)
-
-customer_bronze = create_bronze_table(
-    "Customer",
-    "Customer/",
-    "Clientes - ingestao bruta (SalesLT.Customer)"
-)
-
-product_bronze = create_bronze_table(
-    "Product",
-    "Product/",
-    "Produtos - ingestao bruta (SalesLT.Product)"
-)
-
-address_bronze = create_bronze_table(
-    "Address",
-    "Address/",
-    "Enderecos - ingestao bruta (SalesLT.Address)"
-)
-
-customer_address_bronze = create_bronze_table(
-    "CustomerAddress",
-    "CustomerAddress/",
-    "Relacao cliente-endereco - ingestao bruta (SalesLT.CustomerAddress)"
-)
-
-product_category_bronze = create_bronze_table(
-    "ProductCategory",
-    "ProductCategory/",
-    "Categorias de produto - ingestao bruta (SalesLT.ProductCategory)"
-)
+# 7 tabelas Bronze (nomes = nomes da fonte, sem sufixo)
+sales_order_header_bronze = create_bronze_table("SalesOrderHeader", "SalesOrderHeader/", "...")
+sales_order_detail_bronze = create_bronze_table("SalesOrderDetail", "SalesOrderDetail/", "...")
+customer_bronze           = create_bronze_table("Customer", "Customer/", "...")
+product_bronze            = create_bronze_table("Product", "Product/", "...")
+address_bronze            = create_bronze_table("Address", "Address/", "...")
+customer_address_bronze   = create_bronze_table("CustomerAddress", "CustomerAddress/", "...")
+product_category_bronze   = create_bronze_table("ProductCategory", "ProductCategory/", "...")
 ```
 
 ### 3.6 DLT Pipeline - Silver
 
 ```python
-# src/pipelines/silver/transform_silver.py
+# src/pipelines/silver/transform_silver.py (v3.0 - codigo real em producao)
+# MUDANCAS v3.0:
+#   - Nomes SEM sufixo "_silver" (schema silver = target do pipeline)
+#   - Refs CROSS-PIPELINE: spark.readStream.table("retailmax.bronze.X")
+#     (NAO dlt.read_stream() - isso so funciona intra-pipeline)
+#   - table_properties incluem "delta.feature.timestampNtz": "supported"
+
 import dlt
 from pyspark.sql import functions as F
 
-# Mapeamento de Status (tinyint) para nomes legiveis
-STATUS_MAP = {
-    1: "InProcess", 2: "Approved", 3: "BackOrdered",
-    4: "Rejected", 5: "Shipped", 6: "Cancelled"
-}
+STATUS_MAP = {1: "InProcess", 2: "Approved", 3: "BackOrdered",
+              4: "Rejected", 5: "Shipped", 6: "Cancelled"}
 
-# -------------------------------------------------------------------
-# Silver: SalesOrderHeader
-# -------------------------------------------------------------------
+# Exemplo: SalesOrderHeader (padrao identico para todas 7 tabelas)
 @dlt.expect_all_or_drop({
     "valid_order_id": "SalesOrderID IS NOT NULL",
     "valid_customer": "CustomerID IS NOT NULL",
@@ -486,13 +538,13 @@ STATUS_MAP = {
     "valid_total": "TotalDue >= 0",
 })
 @dlt.table(
-    name="SalesOrderHeader_silver",
+    name="SalesOrderHeader",  # SEM sufixo (schema silver = target)
     comment="Cabecalho de pedidos - limpo e validado",
-    table_properties={"quality": "silver"},
+    table_properties={"quality": "silver", "delta.feature.timestampNtz": "supported"},
 )
 def sales_order_header_silver():
     return (
-        dlt.read_stream("SalesOrderHeader_bronze")
+        spark.readStream.table("retailmax.bronze.SalesOrderHeader")  # UC path cross-pipeline
         .dropDuplicates(["SalesOrderID"])
         .withColumn("OrderDate", F.to_date("OrderDate"))
         .withColumn("ShipDate", F.to_date("ShipDate"))
@@ -503,364 +555,107 @@ def sales_order_header_silver():
         .withColumn("_processed_at", F.current_timestamp())
     )
 
-
-# -------------------------------------------------------------------
-# Silver: SalesOrderDetail
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_detail_id": "SalesOrderDetailID IS NOT NULL",
-    "valid_order_ref": "SalesOrderID IS NOT NULL",
-    "valid_product": "ProductID IS NOT NULL",
-    "positive_qty": "OrderQty > 0",
-    "positive_price": "UnitPrice >= 0",
-})
-@dlt.table(
-    name="SalesOrderDetail_silver",
-    comment="Detalhes de pedidos - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def sales_order_detail_silver():
-    return (
-        dlt.read_stream("SalesOrderDetail_bronze")
-        .dropDuplicates(["SalesOrderDetailID"])
-        .withColumn("UnitPriceDiscount", F.coalesce(F.col("UnitPriceDiscount"), F.lit(0)))
-        .withColumn(
-            "Revenue",
-            F.col("OrderQty") * F.col("UnitPrice") * (F.lit(1) - F.col("UnitPriceDiscount"))
-        )
-        .withColumn("_processed_at", F.current_timestamp())
-    )
-
-
-# -------------------------------------------------------------------
-# Silver: Customer
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_customer_id": "CustomerID IS NOT NULL",
-    "valid_first_name": "FirstName IS NOT NULL",
-    "valid_last_name": "LastName IS NOT NULL",
-})
-@dlt.table(
-    name="Customer_silver",
-    comment="Clientes - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def customer_silver():
-    return (
-        dlt.read_stream("Customer_bronze")
-        .dropDuplicates(["CustomerID"])
-        .withColumn("FirstName", F.trim(F.col("FirstName")))
-        .withColumn("LastName", F.trim(F.col("LastName")))
-        .withColumn("FullName", F.concat_ws(" ", F.col("FirstName"), F.col("LastName")))
-        .withColumn("EmailAddress", F.lower(F.trim(F.col("EmailAddress"))))
-        .withColumn(
-            "CustomerSegment",
-            F.when(F.col("CompanyName").isNotNull(), F.lit("B2B"))
-             .otherwise(F.lit("B2C"))
-        )
-        .withColumn("_processed_at", F.current_timestamp())
-    )
-
-
-# -------------------------------------------------------------------
-# Silver: Product
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_product_id": "ProductID IS NOT NULL",
-    "valid_name": "Name IS NOT NULL",
-    "valid_price": "ListPrice >= 0",
-})
-@dlt.table(
-    name="Product_silver",
-    comment="Produtos - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def product_silver():
-    return (
-        dlt.read_stream("Product_bronze")
-        .dropDuplicates(["ProductID"])
-        .withColumn("Name", F.trim(F.col("Name")))
-        .withColumn(
-            "IsDiscontinued",
-            F.when(F.col("DiscontinuedDate").isNotNull(), F.lit(True))
-             .otherwise(F.lit(False))
-        )
-        .withColumn("_processed_at", F.current_timestamp())
-    )
-
-
-# -------------------------------------------------------------------
-# Silver: Address
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_address_id": "AddressID IS NOT NULL",
-    "valid_city": "City IS NOT NULL",
-})
-@dlt.table(
-    name="Address_silver",
-    comment="Enderecos - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def address_silver():
-    return (
-        dlt.read_stream("Address_bronze")
-        .dropDuplicates(["AddressID"])
-        .withColumn("City", F.trim(F.col("City")))
-        .withColumn("StateProvince", F.trim(F.col("StateProvince")))
-        .withColumn("CountryRegion", F.trim(F.col("CountryRegion")))
-        .withColumn("_processed_at", F.current_timestamp())
-    )
-
-
-# -------------------------------------------------------------------
-# Silver: CustomerAddress (bridge table)
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_customer_id": "CustomerID IS NOT NULL",
-    "valid_address_id": "AddressID IS NOT NULL",
-})
-@dlt.table(
-    name="CustomerAddress_silver",
-    comment="Relacao cliente-endereco - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def customer_address_silver():
-    return (
-        dlt.read_stream("CustomerAddress_bronze")
-        .dropDuplicates(["CustomerID", "AddressID"])
-        .withColumn("_processed_at", F.current_timestamp())
-    )
-
-
-# -------------------------------------------------------------------
-# Silver: ProductCategory
-# -------------------------------------------------------------------
-@dlt.expect_all_or_drop({
-    "valid_category_id": "ProductCategoryID IS NOT NULL",
-    "valid_name": "Name IS NOT NULL",
-})
-@dlt.table(
-    name="ProductCategory_silver",
-    comment="Categorias de produto - limpo e validado",
-    table_properties={"quality": "silver"},
-)
-def product_category_silver():
-    return (
-        dlt.read_stream("ProductCategory_bronze")
-        .dropDuplicates(["ProductCategoryID"])
-        .withColumn("Name", F.trim(F.col("Name")))
-        .withColumn("_processed_at", F.current_timestamp())
-    )
+# ... mesma pattern para as 6 tabelas restantes:
+# SalesOrderDetail: Revenue = OrderQty * UnitPrice * (1 - UnitPriceDiscount)
+# Customer: FullName, EmailAddress lower/trim, CustomerSegment (B2B/B2C)
+# Product: IsDiscontinued flag
+# Address: City/StateProvince/CountryRegion trim
+# CustomerAddress: bridge table (dedup por CustomerID+AddressID)
+# ProductCategory: Name trim
 ```
 
 ### 3.7 DLT Pipeline - Gold (Modelo Dimensional)
 
 ```python
-# src/pipelines/gold/model_gold.py
+# src/pipelines/gold/model_gold.py (v3.0 - codigo real em producao)
+# MUDANCAS v3.0:
+#   - Refs CROSS-PIPELINE para Silver: spark.read.table("retailmax.silver.X")
+#     (NAO "LIVE.X_silver" - Silver esta em pipeline separado)
+#   - Refs INTRA-PIPELINE para dims: spark.read.table("LIVE.X")
+#     (SEM "LIVE.gold.X" - "gold" e o schema default do pipeline)
+#   - table_properties incluem "delta.feature.timestampNtz": "supported"
+
 import dlt
 from pyspark.sql import functions as F
 
-# -------------------------------------------------------------------
-# dim_date (gerada, nao depende de fonte)
-# -------------------------------------------------------------------
+# dim_date: gerada por range 2000-2030 (sem dependencia de fonte)
 @dlt.table(
     name="dim_date",
-    comment="Dimensao de data",
-    table_properties={"quality": "gold"},
+    comment="Dimensao de data - gerada por range 2000-2030",
+    table_properties={"quality": "gold", "delta.feature.timestampNtz": "supported"},
 )
 def dim_date():
-    return (
-        spark.sql("""
-            SELECT
-                CAST(date_format(d, 'yyyyMMdd') AS INT) AS DateKey,
-                d AS FullDate,
-                YEAR(d) AS Year,
-                QUARTER(d) AS Quarter,
-                MONTH(d) AS Month,
-                DAY(d) AS Day,
-                dayofweek(d) AS DayOfWeek,
-                date_format(d, 'EEEE') AS DayName,
-                CASE WHEN dayofweek(d) IN (1, 7) THEN true ELSE false END AS IsWeekend
-            FROM (
-                SELECT explode(sequence(
-                    to_date('2000-01-01'),
-                    to_date('2030-12-31'),
-                    interval 1 day
-                )) AS d
-            )
-        """)
-    )
+    return spark.sql("""...""")  # sequence 2000-01-01 to 2030-12-31
 
-
-# -------------------------------------------------------------------
-# dim_customer
-# Colunas reais do SalesLT.Customer: CustomerID, NameStyle, Title,
-# FirstName, MiddleName, LastName, Suffix, CompanyName, SalesPerson,
-# EmailAddress, Phone, PasswordHash, PasswordSalt, rowguid, ModifiedDate
-# -------------------------------------------------------------------
+# dim_customer: Customer + Address + purchase metrics + churn relativo
 @dlt.table(
     name="dim_customer",
-    comment="Dimensao de clientes",
-    table_properties={"quality": "gold"},
+    comment="Dimensao de clientes - metricas de compra, churn relativo, geografia",
+    table_properties={"quality": "gold", "delta.feature.timestampNtz": "supported"},
 )
 def dim_customer():
-    customer = spark.read.table("LIVE.Customer_silver")
-    orders = spark.read.table("LIVE.SalesOrderHeader_silver")
-    cust_addr = spark.read.table("LIVE.CustomerAddress_silver")
-    address = spark.read.table("LIVE.Address_silver")
+    customer = spark.read.table("retailmax.silver.Customer")       # cross-pipeline (UC path)
+    orders = spark.read.table("retailmax.silver.SalesOrderHeader") # cross-pipeline
+    cust_addr = spark.read.table("retailmax.silver.CustomerAddress")
+    address = spark.read.table("retailmax.silver.Address")
+    # ... metricas, churn com MAX(OrderDate) - 90 dias, endereco principal
+    return (...)
 
-    # Metricas de compra por cliente
-    customer_metrics = (
-        orders
-        .groupBy("CustomerID")
-        .agg(
-            F.min("OrderDate").alias("FirstPurchase"),
-            F.max("OrderDate").alias("LastPurchase"),
-            F.countDistinct("SalesOrderID").alias("TotalOrders"),
-            F.sum("TotalDue").alias("TotalSpent"),
-        )
-    )
-
-    # Data de referencia para churn: MAX(OrderDate) do dataset inteiro
-    # (dados historicos ~2008, usar current_date() marcaria 100% como churned)
-    max_order_date = orders.agg(F.max("OrderDate")).collect()[0][0]
-
-    # Endereco principal do cliente (primeiro match)
-    primary_address = (
-        cust_addr
-        .join(address, "AddressID")
-        .dropDuplicates(["CustomerID"])
-        .select("CustomerID", "City", "StateProvince", "CountryRegion")
-    )
-
-    return (
-        customer
-        .join(customer_metrics, "CustomerID", "left")
-        .join(primary_address, "CustomerID", "left")
-        .withColumn("CustomerKey", F.monotonically_increasing_id())
-        .withColumn(
-            "IsChurned",
-            F.when(
-                F.col("LastPurchase") < F.date_sub(F.lit(max_order_date), 90), True
-            ).otherwise(False)
-        )
-        .select(
-            "CustomerKey", "CustomerID", "FullName", "FirstName", "LastName",
-            "CompanyName", "CustomerSegment", "EmailAddress", "Phone",
-            "City", "StateProvince", "CountryRegion",
-            "FirstPurchase", "LastPurchase", "TotalOrders", "TotalSpent",
-            "IsChurned",
-        )
-    )
-
-
-# -------------------------------------------------------------------
-# dim_product
-# Colunas reais do SalesLT.Product: ProductID, Name, ProductNumber,
-# Color, StandardCost, ListPrice, Size, Weight, ProductCategoryID,
-# ProductModelID, SellStartDate, SellEndDate, DiscontinuedDate, ...
-# -------------------------------------------------------------------
+# dim_product: Product + ProductCategory hierarquia (parent/child)
 @dlt.table(
     name="dim_product",
-    comment="Dimensao de produtos",
-    table_properties={"quality": "gold"},
+    comment="Dimensao de produtos - hierarquia categoria/subcategoria",
+    table_properties={"quality": "gold", "delta.feature.timestampNtz": "supported"},
 )
 def dim_product():
-    product = spark.read.table("LIVE.Product_silver")
-    category = spark.read.table("LIVE.ProductCategory_silver")
+    product = spark.read.table("retailmax.silver.Product")          # cross-pipeline
+    category = spark.read.table("retailmax.silver.ProductCategory") # cross-pipeline
+    # ... hierarquia CategoryName/SubcategoryName, IsDiscontinued
+    return (...)
 
-    # ProductCategory tem hierarquia: ParentProductCategoryID
-    # Nivel 1 = categoria pai (Bikes, Components, Clothing, Accessories)
-    # Nivel 2 = subcategoria (Mountain Bikes, Road Bikes, etc.)
-    parent_cat = category.select(
-        F.col("ProductCategoryID").alias("ParentCategoryID"),
-        F.col("Name").alias("ParentCategoryName"),
-    )
-    sub_cat = (
-        category
-        .join(
-            parent_cat,
-            category["ParentProductCategoryID"] == parent_cat["ParentCategoryID"],
-            "left"
-        )
-        .select(
-            category["ProductCategoryID"],
-            category["Name"].alias("SubcategoryName"),
-            F.coalesce("ParentCategoryName", category["Name"]).alias("CategoryName"),
-        )
-    )
-
-    return (
-        product
-        .join(sub_cat, "ProductCategoryID", "left")
-        .withColumn("ProductKey", F.monotonically_increasing_id())
-        .select(
-            "ProductKey", "ProductID", "Name", "ProductNumber",
-            "Color", "Size", "Weight", "ListPrice", "StandardCost",
-            "CategoryName", "SubcategoryName",
-            "SellStartDate", "SellEndDate", "IsDiscontinued",
-        )
-    )
-
-
-# -------------------------------------------------------------------
-# fact_sales
-# Revenue inclui UnitPriceDiscount (corrigido v2.1)
-# -------------------------------------------------------------------
+# fact_sales: Header + Detail + dims, expectations FAIL
 @dlt.expect_or_fail("revenue_positive", "Revenue >= 0")
 @dlt.expect_or_fail("valid_customer_key", "CustomerKey IS NOT NULL")
 @dlt.expect_or_fail("valid_product_key", "ProductKey IS NOT NULL")
 @dlt.table(
     name="fact_sales",
-    comment="Fato de vendas - modelo dimensional",
-    table_properties={"quality": "gold"},
+    comment="Fato de vendas - modelo dimensional com Revenue incluindo desconto",
+    table_properties={"quality": "gold", "delta.feature.timestampNtz": "supported"},
 )
 def fact_sales():
-    header = spark.read.table("LIVE.SalesOrderHeader_silver")
-    detail = spark.read.table("LIVE.SalesOrderDetail_silver")
-    dim_cust = spark.read.table("LIVE.dim_customer").select("CustomerKey", "CustomerID")
-    dim_prod = spark.read.table("LIVE.dim_product").select("ProductKey", "ProductID")
-
-    return (
-        detail
-        .join(header, "SalesOrderID")
-        .join(dim_cust, "CustomerID")
-        .join(dim_prod, "ProductID")
-        .select(
-            F.monotonically_increasing_id().alias("SalesKey"),
-            "SalesOrderID",
-            F.date_format("OrderDate", "yyyyMMdd").cast("int").alias("OrderDateKey"),
-            "CustomerKey",
-            "ProductKey",
-            "OrderQty",
-            "UnitPrice",
-            "UnitPriceDiscount",
-            "Revenue",
-            "LineTotal",
-            "StatusName",
-        )
-    )
+    header = spark.read.table("retailmax.silver.SalesOrderHeader")  # cross-pipeline
+    detail = spark.read.table("retailmax.silver.SalesOrderDetail")  # cross-pipeline
+    dim_cust = spark.read.table("LIVE.dim_customer").select("CustomerKey", "CustomerID")  # intra-pipeline
+    dim_prod = spark.read.table("LIVE.dim_product").select("ProductKey", "ProductID")     # intra-pipeline
+    return (...)
 ```
 
 ### 3.8 DLT Pipeline - Gold (KPIs)
 
 ```python
-# src/pipelines/gold/kpis_gold.py
+# src/pipelines/gold/kpis_gold.py (v3.0 - codigo real em producao)
+# NOTA: Todas refs INTRA-PIPELINE usam "LIVE.X" (sem schema prefix)
+#       5 KPIs derivados de fact_sales, dim_date, dim_customer, dim_product
 import dlt
 from pyspark.sql import functions as F
 
-# -------------------------------------------------------------------
-# KPI: Receita Total por periodo
-# -------------------------------------------------------------------
+# kpi_receita_total: Revenue por Year/Quarter/Month
+# kpi_ticket_medio: Ticket medio por periodo e CustomerSegment (B2B/B2C)
+# kpi_churn: Clientes sem compra >90 dias (relativo a MAX OrderDate do dataset)
+# kpi_produtos_descontinuados: Produtos descontinuados com receita historica
+# kpi_top_produtos: Ranking de produtos por receita com CategoryName
+
+# Exemplo: kpi_receita_total
 @dlt.table(
     name="kpi_receita_total",
-    comment="KPI: Receita total agregada por periodo",
-    table_properties={"quality": "gold"},
+    comment="KPI: Receita total agregada por periodo (Year/Quarter/Month)",
+    table_properties={"quality": "gold", "delta.feature.timestampNtz": "supported"},
 )
 def kpi_receita_total():
     return (
-        spark.read.table("LIVE.fact_sales")
-        .join(spark.read.table("LIVE.dim_date"), "OrderDateKey")
+        spark.read.table("LIVE.fact_sales")  # intra-pipeline (SEM schema prefix)
+        .join(spark.read.table("LIVE.dim_date"),
+              F.col("OrderDateKey") == F.col("DateKey"))
         .groupBy("Year", "Quarter", "Month")
         .agg(
             F.sum("Revenue").alias("ReceitaTotal"),
@@ -868,113 +663,7 @@ def kpi_receita_total():
             (F.sum("Revenue") / F.countDistinct("SalesOrderID")).alias("TicketMedio"),
         )
     )
-
-
-# -------------------------------------------------------------------
-# KPI: Ticket Medio por periodo e segmento
-# Segmentacao por CustomerSegment (B2B/B2C) derivado de CompanyName
-# -------------------------------------------------------------------
-@dlt.table(
-    name="kpi_ticket_medio",
-    comment="KPI: Ticket medio por periodo e segmento de cliente",
-    table_properties={"quality": "gold"},
-)
-def kpi_ticket_medio():
-    return (
-        spark.read.table("LIVE.fact_sales")
-        .join(spark.read.table("LIVE.dim_date"), "OrderDateKey")
-        .join(spark.read.table("LIVE.dim_customer"), "CustomerKey")
-        .groupBy("Year", "Month", "CustomerSegment")
-        .agg(
-            F.sum("Revenue").alias("Receita"),
-            F.countDistinct("SalesOrderID").alias("Pedidos"),
-            (F.sum("Revenue") / F.countDistinct("SalesOrderID")).alias("TicketMedio"),
-        )
-    )
-
-
-# -------------------------------------------------------------------
-# KPI: Churn (clientes sem compra > 90 dias antes do ultimo pedido)
-# Usa data relativa ao dataset (MAX(OrderDate)) como referencia
-# -------------------------------------------------------------------
-@dlt.table(
-    name="kpi_churn",
-    comment="KPI: Clientes em churn (sem compra > 90 dias relativo ao dataset)",
-    table_properties={"quality": "gold"},
-)
-def kpi_churn():
-    dim_customer = spark.read.table("LIVE.dim_customer")
-    max_date = dim_customer.agg(F.max("LastPurchase")).collect()[0][0]
-
-    return (
-        dim_customer
-        .select(
-            "CustomerKey", "CustomerID", "FullName", "EmailAddress",
-            "CustomerSegment", "City", "CountryRegion",
-            "LastPurchase", "TotalOrders", "TotalSpent", "IsChurned",
-            F.datediff(F.lit(max_date), "LastPurchase").alias("DaysSinceLastPurchase"),
-        )
-        .where("IsChurned = true")
-    )
-
-
-# -------------------------------------------------------------------
-# KPI: Produtos Descontinuados
-# Substitui kpi_estoque_critico (ProductInventory nao existe no LT)
-# Usa SellEndDate e DiscontinuedDate do SalesLT.Product
-# -------------------------------------------------------------------
-@dlt.table(
-    name="kpi_produtos_descontinuados",
-    comment="KPI: Produtos descontinuados ou fora de venda",
-    table_properties={"quality": "gold"},
-)
-def kpi_produtos_descontinuados():
-    product = spark.read.table("LIVE.dim_product")
-    sales = spark.read.table("LIVE.fact_sales")
-
-    # Receita por produto
-    product_revenue = (
-        sales
-        .groupBy("ProductKey")
-        .agg(
-            F.sum("Revenue").alias("ReceitaTotal"),
-            F.sum("OrderQty").alias("QtdVendida"),
-        )
-    )
-
-    return (
-        product
-        .where("IsDiscontinued = true")
-        .join(product_revenue, "ProductKey", "left")
-        .select(
-            "ProductKey", "ProductID", "Name", "CategoryName",
-            "ListPrice", "SellStartDate", "SellEndDate",
-            F.coalesce("ReceitaTotal", F.lit(0)).alias("ReceitaTotal"),
-            F.coalesce("QtdVendida", F.lit(0)).alias("QtdVendida"),
-        )
-    )
-
-
-# -------------------------------------------------------------------
-# KPI: Top Produtos por receita
-# -------------------------------------------------------------------
-@dlt.table(
-    name="kpi_top_produtos",
-    comment="KPI: Ranking de produtos por receita",
-    table_properties={"quality": "gold"},
-)
-def kpi_top_produtos():
-    return (
-        spark.read.table("LIVE.fact_sales")
-        .join(spark.read.table("LIVE.dim_product"), "ProductKey")
-        .groupBy("ProductKey", "ProductID", "Name", "CategoryName")
-        .agg(
-            F.sum("Revenue").alias("ReceitaTotal"),
-            F.sum("OrderQty").alias("QtdTotal"),
-            F.countDistinct("SalesOrderID").alias("TotalPedidos"),
-        )
-        .orderBy(F.desc("ReceitaTotal"))
-    )
+# ... (4 KPIs restantes seguem o mesmo padrao de refs LIVE.X)
 ```
 
 ### 3.9 Trigger DLT Refresh (chamado pelo ADF)
@@ -1018,6 +707,14 @@ dbutils.notebook.exit(json.dumps({
 ---
 
 ## 4. Databricks App - Validacao de Master Data
+
+**Status: PENDENTE**
+
+- [ ] Implementar pagina: Visao Geral de Qualidade
+- [ ] Implementar pagina: Registros Anomalos
+- [ ] Implementar pagina: Historico de Cargas
+- [ ] Implementar pagina: Master Data Review
+- [ ] Deploy app no workspace dev
 
 ### 4.1 Estrutura do Repositorio `databricks-app`
 
@@ -1098,7 +795,18 @@ env:
            /------------------\
 ```
 
-### 5.2 Testes Unitarios (pytest)
+### 5.2 Status dos Testes
+
+| Tipo | Arquivo | Quantidade | Status |
+|------|---------|------------|--------|
+| Unitario | `test_silver.py` | 11 testes | CONCLUIDO |
+| Unitario | `test_gold.py` | 7 testes | CONCLUIDO |
+| Unitario | `test_expectations.py` | - | PENDENTE |
+| Integracao | Checklist (secao 5.4) | 12 itens | PARCIALMENTE CONCLUIDO |
+| KPI Gold | Testes especificos KPIs | - | PENDENTE (gap de cobertura) |
+| E2E | Pipeline completo end-to-end | - | PENDENTE |
+
+### 5.3 Testes Unitarios (pytest) - CONCLUIDO (18 testes)
 
 ```python
 # tests/conftest.py
@@ -1201,135 +909,89 @@ def test_customer_segment(spark):
 CHECKLIST DE INTEGRACAO (executar no workspace dev)
 ===================================================================
 
-[ ] DLT Pipeline executa sem erro (full refresh)
-[ ] Bronze: 7 streaming tables criadas com dados
-[ ] Silver: expectations DROP removendo registros invalidos
-[ ] Gold: fact_sales com foreign keys validas
-[ ] Gold: KPIs calculados corretamente
-[ ] Gold: Revenue inclui desconto (validar contra LineTotal da fonte)
-[ ] Unity Catalog: linhagem visivel ate a origem
-[ ] ingestion_control: watermark atualizado apos execucao
-[ ] ADF -> Databricks: trigger funcionando end-to-end
-[ ] Row Filters: usuarios restritos nao veem dados de outros territorios
-[ ] Genie: responde "Qual a receita total?" com dado correto
-[ ] App: carrega metricas de qualidade sem erro
+[x] DLT Pipeline executa sem erro (full refresh)        - CONCLUIDO (3 pipelines)
+[x] Bronze: 7 streaming tables criadas com dados         - CONCLUIDO (19 tabelas total)
+[x] Silver: expectations DROP removendo registros invalidos - CONCLUIDO
+[x] Gold: fact_sales com foreign keys validas             - CONCLUIDO (expectations FAIL)
+[x] Gold: KPIs calculados corretamente                    - CONCLUIDO (5 KPIs)
+[x] Gold: Revenue inclui desconto                         - CONCLUIDO
+[x] Unity Catalog: linhagem visivel ate a origem          - CONCLUIDO
+[x] ingestion_control: watermark atualizado apos execucao - CONCLUIDO
+[x] ADF -> Databricks: trigger funcionando end-to-end     - CONCLUIDO
+[ ] Row Filters: usuarios restritos nao veem dados        - PENDENTE (Fase 5)
+[ ] Genie: responde "Qual a receita total?" correto       - PENDENTE (Fase 5)
+[ ] App: carrega metricas de qualidade sem erro            - PENDENTE (Fase 5)
 ```
 
 ---
 
 ## 6. Cronograma de Desenvolvimento
 
-### FASE 2: Ingestao e Camada Bronze (S5-S7)
+### FASE 2: Ingestao e Camada Bronze (S5-S7) — CONCLUIDO
 
 ```
-SEMANA 5: ADF Metadata-Driven + Auto Loader Setup
+SEMANA 5-7: ADF + Auto Loader + DLT Bronze              STATUS: CONCLUIDO
 ===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
------+------------------------------------------------+-----------
-S5-1 | Refinar pipeline ADF: error handling, retry      | Data Eng
-S5-2 | Implementar update de watermark e status          | Data Eng
-S5-3 | Configurar Auto Loader schemas (cloudFiles)       | Data Eng
-S5-4 | Carga full inicial: todas 7 tabelas (SalesLT.*)   | Data Eng
-S5-5 | Validar dados na landing zone (formato, volume)   | Data Eng
+[x] Pipeline ADF pl_master_ingestion (Lookup + ForEach)  - Metadata-driven
+[x] Sub-pipelines: pl_copy_full_load + pl_copy_incremental
+[x] Update de watermark e status na ingestion_control
+[x] Auto Loader com cloudFiles + schemaLocation
+[x] Carga full inicial: 7 tabelas SalesLT.* na landing zone
+[x] DLT Bronze: 7 streaming tables com expectation rescued_data_null
+[x] Full refresh executado com sucesso
+[x] Linhagem visivel no Unity Catalog
+[x] Carga incremental testada (SalesOrderHeader, SalesOrderDetail)
 
+NOTA: timestampNtz required para Parquet do ADF - resolvido via table_properties
 
-SEMANA 6: DLT Bronze Tables + Expectations WARN
-===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
------+------------------------------------------------+-----------
-S6-1 | Implementar ingest_bronze.py (7 streaming tables) | Data Eng
-S6-2 | Configurar expectations WARN em cada tabela        | Data Eng
-S6-3 | Executar full refresh do DLT pipeline              | Data Eng
-S6-4 | Validar linhagem no Unity Catalog                  | Data Eng
-S6-5 | Validar metricas de qualidade no DLT dashboard     | Data Eng
-
-
-SEMANA 7: Carga Incremental + Validacao End-to-End
-===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
------+------------------------------------------------+-----------
-S7-1 | Testar carga incremental (inserir dados novos)    | Data Eng
-S7-2 | Validar watermark atualizado na ingestion_control | Data Eng
-S7-3 | Testar adicionar nova tabela (INSERT na control)  | Data Eng
-S7-4 | Configurar trigger diario no ADF (02:00 UTC)      | Data Eng
-S7-5 | Demo: flow completo SQL Server -> Bronze           | Todos
-
->>> MILESTONE M2: DATA LANDING <<<
+>>> MILESTONE M2: DATA LANDING <<< STATUS: CONCLUIDO
 ```
 
-### FASE 3: Transformacao e Camada Silver (S8-S10)
+### FASE 3: Transformacao e Camada Silver (S8-S10) — CONCLUIDO
 
 ```
-SEMANA 8: Silver - SalesOrderHeader + SalesOrderDetail
+SEMANA 8-10: Silver Layer                                STATUS: CONCLUIDO
 ===================================================================
-S8-1 | Implementar SalesOrderHeader_silver (dedup, tipos, StatusName) | Data Eng
-S8-2 | Implementar SalesOrderDetail_silver (dedup, Revenue c/ discount) | Data Eng
-S8-3 | Configurar expectations DROP em ambas               | Data Eng
-S8-4 | Escrever testes unitarios (pytest)                  | Data Eng
-S8-5 | Code review + merge                                 | Data Eng
+[x] SalesOrderHeader: dedup, tipos, StatusName map       - 4 expectations DROP
+[x] SalesOrderDetail: dedup, Revenue c/ discount         - 5 expectations DROP
+[x] Customer: dedup, FullName, CustomerSegment B2B/B2C   - 3 expectations DROP
+[x] Product: dedup, IsDiscontinued flag                  - 3 expectations DROP
+[x] Address: dedup, trim City/State/Country              - 2 expectations DROP
+[x] CustomerAddress: dedup (CustomerID+AddressID)        - 2 expectations DROP
+[x] ProductCategory: dedup, trim Name                    - 2 expectations DROP
+[x] 11 testes unitarios (test_silver.py)                 - PASSANDO
+[x] Refs cross-pipeline: spark.readStream.table("retailmax.bronze.X")
+[x] DLT full refresh (Bronze + Silver) executado com sucesso
 
-
-SEMANA 9: Silver - Customer + Product + Address + Category
-===================================================================
-S9-1 | Implementar Customer_silver (dedup, FullName, Segment)  | Data Eng
-S9-2 | Implementar Product_silver (dedup, IsDiscontinued)      | Data Eng
-S9-3 | Implementar Address_silver + CustomerAddress_silver     | Data Eng
-S9-4 | Implementar ProductCategory_silver                      | Data Eng
-S9-5 | Testes unitarios + code review                          | Data Eng
-
-
-SEMANA 10: Validacao Silver Layer + Testes Integracao
-===================================================================
-S10-1 | Executar DLT full refresh (Bronze + Silver)         | Data Eng
-S10-2 | Analisar taxa de registros dropados (< 5%?)         | Data Eng
-S10-3 | Executar testes de integracao no workspace dev       | Data Eng
-S10-4 | Documentar regras de qualidade aplicadas             | Data Eng
-S10-5 | Demo: qualidade de dados Bronze vs Silver            | Todos
-
->>> MILESTONE M3: CLEAN DATA <<<
+>>> MILESTONE M3: CLEAN DATA <<< STATUS: CONCLUIDO
 ```
 
-### FASE 4: Modelo Dimensional e Camada Gold (S11-S14)
+### FASE 4: Modelo Dimensional e Camada Gold (S11-S14) — CONCLUIDO
 
 ```
-SEMANA 11: dim_date + dim_customer
+SEMANA 11-14: Gold Layer                                 STATUS: CONCLUIDO
 ===================================================================
-S11-1 | Implementar dim_date (gerada por range)                        | Data Eng
-S11-2 | Implementar dim_customer (metricas, churn relativo, geografia) | Data Eng
-S11-3 | Testes unitarios para logica de churn e segmentacao            | Data Eng
-S11-4 | Code review + merge                                            | Data Eng
+[x] dim_date: range 2000-2030 (11,323 registros)
+[x] dim_customer: metricas compra, churn relativo (MAX OrderDate - 90d), geografia
+[x] dim_product: hierarquia ProductCategory (parent/child), IsDiscontinued
+[x] fact_sales: Header+Detail+dims, Revenue c/ discount, expectations FAIL
+[x] kpi_receita_total: Year/Quarter/Month
+[x] kpi_ticket_medio: por CustomerSegment (B2B/B2C)
+[x] kpi_churn: clientes sem compra >90 dias
+[x] kpi_produtos_descontinuados: substitui kpi_estoque_critico
+[x] kpi_top_produtos: ranking por receita com CategoryName
+[x] 7 testes unitarios (test_gold.py) - 3 classes               - PASSANDO
+[x] Refs cross-pipeline: spark.read.table("retailmax.silver.X")
+[x] Refs intra-pipeline: spark.read.table("LIVE.X")
+[x] DLT full refresh (Bronze -> Silver -> Gold) executado com sucesso
 
+Tabelas criadas em dev: 19 total (7 bronze + 7 silver + 4 dims + 5 KPIs + 1 fact)
+PRs mergeados: retailmax-databricks #1, #2 | retailmax-data-factory #3
 
-SEMANA 12: dim_product + fact_sales
-===================================================================
-S12-1 | Implementar dim_product (JOIN com ProductCategory)     | Data Eng
-S12-2 | Implementar fact_sales (joins + Revenue com discount)  | Data Eng
-S12-3 | Configurar expectations FAIL (integridade ref.)        | Data Eng
-S12-4 | Testes unitarios para revenue e joins                  | Data Eng
-S12-5 | Z-ORDER em OrderDateKey e CustomerKey                  | Data Eng
-
-
-SEMANA 13: KPIs
-===================================================================
-S13-1 | Implementar kpi_receita_total                          | Data Eng
-S13-2 | Implementar kpi_ticket_medio (por CustomerSegment)     | Data Eng
-S13-3 | Implementar kpi_churn + kpi_produtos_descontinuados    | Data Eng
-S13-4 | Implementar kpi_top_produtos                           | Data Eng
-S13-5 | Validacao cruzada: KPIs vs SQL Server direto           | Data Eng
-
-
-SEMANA 14: Validacao Gold Layer + Stakeholders
-===================================================================
-S14-1 | Executar DLT full refresh (Bronze -> Silver -> Gold) | Data Eng
-S14-2 | Validar modelo dimensional com stakeholders          | Data Eng
-S14-3 | Correcoes pos-feedback                               | Data Eng
-S14-4 | Testes de integracao completos                       | Data Eng
-S14-5 | Demo: modelo Gold + KPIs                             | Todos
-
->>> MILESTONE M4: ANALYTICS READY <<<
+>>> MILESTONE M4: ANALYTICS READY <<< STATUS: CONCLUIDO
 ```
 
-### FASE 5: Consumo, Dashboards, GenAI e App (S15-S18)
+### FASE 5: Consumo, Dashboards, GenAI e App (S15-S18) — PENDENTE
 
 ```
 SEMANA 15: SQL Endpoint + Databricks Dashboards
@@ -1370,7 +1032,7 @@ S18-5 | Sessao de treinamento com usuarios finais             | Todos
 >>> MILESTONE M5: USER ACCESS <<<
 ```
 
-### FASE 6 (Dev): Validacao Hml, Deploy Prd e Go-Live (S20-S24)
+### FASE 6 (Dev): Validacao Hml, Deploy Prd e Go-Live (S20-S24) — PENDENTE
 
 ```
 SEMANA 20: Validacao em Homologacao

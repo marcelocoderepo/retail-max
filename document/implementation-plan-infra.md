@@ -1,8 +1,19 @@
 # Plano de Implementacao - Parte 1: Infraestrutura e DevOps
 
-**Versao:** 2.0 | **Data:** 2026-03-28 | **Status:** Proposto
+**Versao:** 3.0 | **Data:** 2026-04-17 | **Status:** PARCIALMENTE CONCLUIDO
 **Referencia:** `document/architecture-plan.md` v2.1
 **Complemento:** `document/implementation-plan-dev.md` (Parte 2: Desenvolvimento)
+
+**Changelog v3.0 (2026-04-15):**
+- Status atualizado: TODOS os 144 recursos Azure provisionados (48 por ambiente, zero diff)
+- Pre-requisitos atualizados: todos CONCLUIDO
+- Unity Catalog: nomenclatura corrigida para `retailmax` (sem sufixo de ambiente)
+- Azure DevOps: estrutura real documentada (1 org, 1 projeto, 3 repos)
+- CI/CD: 6 pipelines criadas nos repos corretos
+- Key Vault: secret `sql-retailmax-source-connection-string` provisionado em dev
+- UC Grants: ADF MSI com 9 grants (USE_CATALOG, USE_SCHEMA x4, SELECT+MODIFY x4)
+- Cronograma Fase 1: todas as tarefas marcadas como CONCLUIDO
+- Subscription ID e Tenant ID reais documentados
 
 **Changelog v2.0:**
 - Documento separado da versao unificada (v1.1)
@@ -21,13 +32,13 @@ Para o desenvolvimento de pipelines de dados, aplicacao e testes, consultar `imp
 
 | Item | Responsavel | Status |
 |------|-------------|--------|
-| Azure Subscription ativa (Pay-as-you-go ou EA) | Admin Azure | PENDENTE |
-| Azure AD Tenant com permissoes Global Admin ou Owner | Admin Azure | PENDENTE |
-| SQL Server AdventureWorks acessivel (IP/VPN/ER) | DBA | PENDENTE |
-| Conta Azure DevOps (Basic, 5 usuarios gratuitos) | DevOps Lead | PENDENTE |
-| Dominio de email para Service Principals | Admin Azure | PENDENTE |
-| Budget aprovado (estimativa mensal) | Gerencia | PENDENTE |
-| Licenca Databricks Premium (Unity Catalog requer Premium) | Admin Azure | PENDENTE |
+| Azure Subscription ativa (Pay-as-you-go) | Admin Azure | CONCLUIDO - RetailMax (666333e1-8511-4c47-b1ea-41a23af85487) |
+| Azure AD Tenant com permissoes Global Admin ou Owner | Admin Azure | CONCLUIDO - massdatagcpgmail.onmicrosoft.com (ae89487f) |
+| SQL Server AdventureWorks acessivel | DBA | CONCLUIDO - sql-retailmax-source.database.windows.net (centralus) |
+| Conta Azure DevOps (Basic, 5 usuarios gratuitos) | DevOps Lead | CONCLUIDO - dev.azure.com/massdatagcp |
+| Dominio de email para Service Principals | Admin Azure | CONCLUIDO - 3 SPNs criados (dev/hml/prd) |
+| Budget aprovado (estimativa mensal) | Gerencia | CONCLUIDO - Pay-as-you-go |
+| Licenca Databricks Premium (Unity Catalog requer Premium) | Admin Azure | CONCLUIDO - 3 workspaces Premium |
 
 ### 1.2 Convencoes de Nomenclatura
 
@@ -56,8 +67,8 @@ Subnets:
   snet-private-endpoints-{env} 10.0.3.0/24 (dev) / 10.2.3.0/24 (hml) / 10.1.3.0/24 (prd)
 
 Unity Catalog:
-  Catalogo:   retailmax_dev / retailmax_hml / retailmax_prd
-  Schemas:    bronze, silver, gold
+  Catalogo:   retailmax (mesmo nome em todos workspaces - workspace identifica o env)
+  Schemas:    bronze, silver, gold, parametros
 
 Tags obrigatorias:
   project     = "retailmax"
@@ -353,17 +364,15 @@ module "policy" {
 ### 2.4 Variaveis por Ambiente
 
 ```hcl
-# environments/dev/terraform.tfvars
+# Todos os ambientes usam a mesma subscription
+# environments/*/terraform.tfvars
 location        = "eastus2"
-subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+subscription_id = "666333e1-8511-4c47-b1ea-41a23af85487"  # RetailMax subscription
 
-# environments/hml/terraform.tfvars
-location        = "eastus2"
-subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"  # pode ser a mesma subscription ou diferente
-
-# environments/prd/terraform.tfvars
-location        = "eastus2"
-subscription_id = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx"
+# VNETs por ambiente (sem overlap):
+# dev: 10.0.0.0/16
+# prd: 10.1.0.0/16
+# hml: 10.2.0.0/16
 ```
 
 ### 2.5 Topologia de Rede
@@ -422,31 +431,32 @@ O Terraform gerencia dependencias automaticamente, mas a ordem logica e:
 ### 3.1 Setup Inicial da Organizacao
 
 ```
-TAREFAS MANUAIS (Portal Azure DevOps - unica vez)
+CONFIGURACAO REAL (CONCLUIDO)
 ===================================================================
 
-1. Criar Organization: dev.azure.com/retailmax
-2. Criar 3 projetos:
-   - retailmax-iac        (Terraform)
-   - retailmax-adf        (Data Factory)
-   - retailmax-databricks  (Notebooks + App)
-3. Em cada projeto:
-   - Criar repos conforme secao 2.3 do architecture-plan
-   - Configurar branch policies:
-     - main: require PR, require 1 reviewer
-     - No direct push to main
-   - Criar Environments:
-     - dev (auto-deploy em merge para main)
-     - hml (auto-deploy apos dev com sucesso)
-     - prd (approval gate: 1 aprovador minimo)
-4. Configurar Service Connections:
-   - Azure Resource Manager (para Terraform e ADF deploy)
-   - Databricks dev/hml/prd (para deploy de notebooks)
-5. Configurar Variable Groups:
-   - retailmax-dev (subscription_id, resource_group, etc.)
-   - retailmax-hml (idem para hml)
-   - retailmax-prd (idem para prd)
-   - retailmax-secrets (linked to Key Vault)
+Organizacao: dev.azure.com/massdatagcp
+Projeto unico: retail-max (3 repos dentro do mesmo projeto)
+
+Repos:
+  retailmax-infra       -> Terraform IaC (10 modulos, 3 envs, 51 arquivos)
+  retailmax-databricks  -> Notebooks DLT, testes, Asset Bundles (15 arquivos)
+  retailmax-data-factory -> ADF pipelines, datasets, linked services (8 arquivos)
+
+Nota: Repo default "retail-max" foi deletado (nao necessario no DevOps).
+      GitHub (retail-max) = monorepo do projeto (docs, agents, KB, planejamento).
+
+CI/CD Pipelines (6 total, 2 por repo):
+  retailmax-infra:
+    - ci-terraform-validate (trigger: PR para main)
+    - cd-terraform-deploy (trigger: merge em main)
+  retailmax-databricks:
+    - ci-databricks-test (trigger: PR para main)
+    - cd-databricks-deploy (trigger: merge em main)
+  retailmax-data-factory:
+    - ci-adf-validate (trigger: PR para main)
+    - cd-adf-deploy (trigger: merge em main)
+
+Branch Policies: main protegida (require PR)
 ```
 
 ### 3.2 Pipeline CI/CD - Terraform (retailmax-iac)
@@ -856,116 +866,120 @@ Regras:
 
 ## 4. Cronograma de Infraestrutura
 
-### FASE 1: Fundacao, Infraestrutura e DevOps (S1-S4)
+### FASE 1: Fundacao, Infraestrutura e DevOps (S1-S4) — CONCLUIDO
 
 ```
-SEMANA 1: Azure DevOps + Terraform Base
+SEMANA 1: Azure DevOps + Terraform Base                    STATUS: CONCLUIDO
 ===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
+DIA  | TAREFA                                          | STATUS
 -----+------------------------------------------------+-----------
-S1-1 | Criar Azure DevOps Org + 3 projetos             | DevOps
-S1-1 | Configurar repos, branch policies               | DevOps
-S1-2 | Criar Terraform state backend (Storage Account)  | Infra
-S1-2 | Implementar modulo: resource-group               | Infra
-S1-3 | Implementar modulo: networking (VNet, Subnets)   | Infra
-S1-3 | Implementar modulo: keyvault                     | Infra
-S1-4 | Implementar modulo: storage (ADLS Gen2)          | Infra
-S1-4 | Configurar CI pipeline Terraform (validate/plan) | DevOps
-S1-5 | Code review + merge -> terraform apply dev       | Infra
+S1-1 | Criar Azure DevOps Org (massdatagcp) + projeto   | CONCLUIDO
+S1-1 | Configurar 3 repos, branch policies              | CONCLUIDO
+S1-2 | Criar Terraform state backend (stretailmaxtfstate)| CONCLUIDO
+S1-2 | Implementar modulo: resource-group               | CONCLUIDO
+S1-3 | Implementar modulo: networking (VNet, Subnets)   | CONCLUIDO
+S1-3 | Implementar modulo: keyvault                     | CONCLUIDO
+S1-4 | Implementar modulo: storage (ADLS Gen2)          | CONCLUIDO
+S1-4 | Configurar CI pipeline Terraform (validate/plan) | CONCLUIDO
+S1-5 | Code review + merge -> terraform apply dev       | CONCLUIDO
 
 ENTREGAVEIS:
-[x] DevOps Organization + 3 projetos
-[x] Terraform: RG + VNet + ADLS + Key Vault em dev
+[x] DevOps Organization + 1 projeto com 3 repos
+[x] Terraform: RG + VNet + ADLS + Key Vault em dev (zero diff)
 [x] CI pipeline rodando em PRs
 
 
-SEMANA 2: Databricks + ADF + Identidade
+SEMANA 2: Databricks + ADF + Identidade                    STATUS: CONCLUIDO
 ===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
+DIA  | TAREFA                                          | STATUS
 -----+------------------------------------------------+-----------
-S2-1 | Implementar modulo: databricks (VNet injection)  | Infra
-S2-2 | Implementar modulo: data-factory                 | Infra
-S2-2 | Implementar modulo: identity (SPNs, MI, Groups)  | Infra
-S2-3 | Implementar modulo: monitoring (Log Analytics)    | Infra
-S2-3 | Terraform apply dev (todos os modulos)            | Infra
-S2-4 | Configurar Service Connections no DevOps          | DevOps
-S2-4 | Configurar Variable Groups (dev/hml/prd/secrets)  | DevOps
-S2-5 | Validar acesso a todos os recursos em dev         | Infra
+S2-1 | Implementar modulo: databricks (VNet injection)  | CONCLUIDO
+S2-2 | Implementar modulo: data-factory                 | CONCLUIDO
+S2-2 | Implementar modulo: identity (SPNs, MI, Groups)  | CONCLUIDO
+S2-3 | Implementar modulo: monitoring (Log Analytics)    | CONCLUIDO
+S2-3 | Terraform apply dev (todos os modulos)            | CONCLUIDO - 48 recursos
+S2-4 | Terraform apply hml (todos os modulos)            | CONCLUIDO - 48 recursos
+S2-4 | Terraform apply prd (todos os modulos)            | CONCLUIDO - 48 recursos
+S2-5 | Validar acesso a todos os recursos                | CONCLUIDO
 
 ENTREGAVEIS:
-[x] TODOS os recursos Azure provisionados em dev
-[x] Service Connections e Variable Groups configurados
+[x] TODOS 144 recursos Azure provisionados (48 x 3 envs, zero diff)
+[x] SPNs criados: spn-retailmax-dev/hml/prd
 [x] Acesso validado (ADF -> ADLS, ADF -> DBX, DBX -> ADLS)
 
 
-SEMANA 3: Unity Catalog + ADF Linked Services + CI/CD
+SEMANA 3: Unity Catalog + ADF Linked Services + CI/CD      STATUS: CONCLUIDO
 ===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
+DIA  | TAREFA                                          | STATUS
 -----+------------------------------------------------+-----------
-S3-1 | Criar Unity Catalog: retailmax_dev (catalogos)   | Data Eng
-S3-1 | Criar schemas: bronze, silver, gold               | Data Eng
-S3-2 | Configurar RBAC: groups + grants                  | Data Eng
-S3-2 | ADF: criar Linked Services (SQL, ADLS, DBX, KV)  | Data Eng
-S3-3 | ADF: configurar Git integration (adf repo)       | DevOps
-S3-3 | Criar CI/CD pipeline para ADF (validate + deploy) | DevOps
-S3-4 | Criar CI/CD pipeline para Databricks (test + deploy)| DevOps
-S3-5 | Validar CI/CD end-to-end (PR -> merge -> deploy)  | DevOps
+S3-1 | Criar Unity Catalog: retailmax (catalog unico)   | CONCLUIDO
+S3-1 | Criar schemas: bronze, silver, gold, parametros   | CONCLUIDO
+S3-2 | Configurar UC grants para ADF MSI (9 grants)     | CONCLUIDO
+S3-2 | ADF: Linked Services (SQL, ADLS, DBX, KV)        | CONCLUIDO
+S3-3 | KV: secret sql-retailmax-source-connection-string | CONCLUIDO
+S3-3 | Criar CI/CD pipelines (6 total, 2 por repo)      | CONCLUIDO
+S3-4 | Cluster policy ADF Single Node UC                 | CONCLUIDO
+S3-5 | Validar CI/CD end-to-end                          | CONCLUIDO
 
 ENTREGAVEIS:
-[x] Unity Catalog operacional com schemas
+[x] Unity Catalog operacional com 4 schemas (bronze/silver/gold/parametros)
 [x] ADF com Linked Services configurados
-[x] CI/CD operacional para os 3 projetos
+[x] 6 CI/CD pipelines operacionais nos repos corretos
+[x] ADF MSI com grants UC (USE_CATALOG, USE_SCHEMA x4, SELECT+MODIFY x4)
 
 
-SEMANA 4: Tabela de Controle + Pipeline Template + Hello World
+SEMANA 4: Tabela de Controle + Pipeline Completo            STATUS: CONCLUIDO
 ===================================================================
-DIA  | TAREFA                                          | RESPONSAVEL
+DIA  | TAREFA                                          | STATUS
 -----+------------------------------------------------+-----------
-S4-1 | Criar ingestion_control DDL no Unity Catalog     | Data Eng
-S4-1 | Inserir dados iniciais (5 tabelas)               | Data Eng
-S4-2 | Criar pipeline ADF pl_master_ingestion (Lookup)   | Data Eng
-S4-2 | Criar sub-pipelines (full + incremental)          | Data Eng
-S4-3 | Criar DLT template "hello world" (1 tabela)      | Data Eng
-S4-3 | Testar ADF -> ADLS -> DLT flow completo           | Data Eng
-S4-4 | Documentar onboarding (README de cada repo)       | Data Eng
-S4-5 | Demo + validacao com equipe                       | Todos
+S4-1 | Criar ingestion_control DDL (schema parametros)  | CONCLUIDO
+S4-1 | Inserir dados iniciais (7 tabelas)               | CONCLUIDO
+S4-2 | Pipeline ADF pl_master_ingestion (Lookup+ForEach) | CONCLUIDO
+S4-2 | Sub-pipelines (full + incremental)               | CONCLUIDO
+S4-3 | DLT 3 pipelines (bronze/silver/gold) + job       | CONCLUIDO - 19 tabelas
+S4-3 | Testar ADF -> ADLS -> DLT flow completo          | CONCLUIDO
+S4-4 | Documentar onboarding (README de cada repo)       | CONCLUIDO
+S4-5 | Validacao end-to-end                              | CONCLUIDO
 
 ENTREGAVEIS:
-[x] ingestion_control populada e funcional
-[x] Pipeline ADF master testado (Lookup + ForEach)
-[x] DLT template executando no workspace
-[x] Flow ADF -> DLT validado end-to-end
+[x] ingestion_control com 7 tabelas no schema parametros
+[x] Pipeline ADF master testado (Lookup + ForEach + update watermark)
+[x] 3 DLT pipelines + job orquestrador executando (19 tabelas criadas)
+[x] Flow ADF -> DLT validado end-to-end em dev
 [x] Documentacao de onboarding
 
->>> MILESTONE M1: INFRA READY <<<
+>>> MILESTONE M1: INFRA READY <<< STATUS: CONCLUIDO (2026-04-15)
 ```
 
-### FASE 6 (Infra): Deploy Hml e Prd (S19-S23)
+### FASE 6 (Infra): Deploy Hml e Prd (S19-S23) — PARCIALMENTE CONCLUIDO
+
+**NOTA:** Terraform apply hml e prd ja foram executados na Fase 1 (144 recursos, 48 por env).
+Restam: Unity Catalog setup em hml/prd, deploy ADF/Databricks, monitoramento.
 
 ```
-SEMANA 19: Deploy de Infraestrutura em Homologacao
+SEMANA 19: Deploy de Infraestrutura em Homologacao      STATUS: PARCIAL
 ===================================================================
-S19-1 | Terraform plan hml (review detalhado)                | Infra
-S19-2 | Terraform apply hml                                  | Infra
-S19-3 | Validar todos os recursos em hml                     | Infra
-S19-4 | Configurar Unity Catalog retailmax_hml               | Data Eng
-S19-5 | Deploy ADF + Databricks + App em hml via CI/CD       | DevOps
+S19-1 | Terraform plan hml (review detalhado)                | CONCLUIDO (zero diff)
+S19-2 | Terraform apply hml                                  | CONCLUIDO (48 recursos)
+S19-3 | Validar todos os recursos em hml                     | CONCLUIDO
+S19-4 | Configurar Unity Catalog retailmax (hml workspace)   | PENDENTE
+S19-5 | Deploy ADF + Databricks + App em hml via CI/CD       | PENDENTE
 
 
-SEMANA 21: Deploy de Infraestrutura em Producao
+SEMANA 21: Deploy de Infraestrutura em Producao         STATUS: PARCIAL
 ===================================================================
-S21-1 | Terraform plan prd (review detalhado)                | Infra
-S21-2 | Terraform apply prd (com approval gate)              | Infra
-S21-3 | Validar todos os recursos em prd                     | Infra
-S21-4 | Configurar Unity Catalog retailmax_prd               | Data Eng
-S21-5 | Deploy ADF + Databricks + App em prd via CI/CD       | DevOps
+S21-1 | Terraform plan prd (review detalhado)                | CONCLUIDO (zero diff)
+S21-2 | Terraform apply prd                                  | CONCLUIDO (48 recursos)
+S21-3 | Validar todos os recursos em prd                     | CONCLUIDO
+S21-4 | Configurar Unity Catalog retailmax (prd workspace)   | PENDENTE
+S21-5 | Deploy ADF + Databricks + App em prd via CI/CD       | PENDENTE
 
 
-SEMANA 23: Monitoramento e Alertas
+SEMANA 23: Monitoramento e Alertas                      STATUS: PENDENTE
 ===================================================================
-S23-3 | Configurar Azure Monitor alertas (falha, custo)       | Infra
-S23-4 | Criar dashboard operacional (pipeline health)         | Data Eng
-S23-5 | Escrever runbook de operacoes                         | Data Eng
+S23-3 | Configurar Azure Monitor alertas (falha, custo)       | PENDENTE
+S23-4 | Criar dashboard operacional (pipeline health)         | PENDENTE
+S23-5 | Escrever runbook de operacoes                         | PENDENTE
 ```
 
 **Nota:** As semanas 20, 22 e 24 sao de responsabilidade do time de Desenvolvimento (ver `implementation-plan-dev.md`).
